@@ -34,6 +34,10 @@ tui = ["dep:ratatui", "dep:crossterm"]
 [dependencies.ratatui]
 version = "0.29"
 optional = true
+# line_count() gives the EXACT wrapped row count ratatui will render (word
+# wrap), so the chat scroll can pin precisely to the newest content instead
+# of drifting when long words/URLs wrap differently than a char estimate.
+features = ["unstable-rendered-line-info"]
 
 [dependencies.crossterm]
 version = "0.28"

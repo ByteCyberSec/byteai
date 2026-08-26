@@ -945,28 +945,8 @@ fn draw_header(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_widget(Paragraph::new(header).style(Style::default().bg(Color::Black)), area);
 }
 
-/// Estimated terminal rows an entry consumes after wrapping at `width`.
-fn entry_rows(e: &LogEntry, width: usize) -> usize {
-    let w = width.max(1);
-    let lines = |s: &str| -> usize { s.lines().map(|l| l.chars().count().div_ceil(w).max(1)).sum::<usize>().max(1) };
-    match e {
-        LogEntry::Text { content, .. } => lines(content),
-        LogEntry::Assistant(content) => lines(content),
-        LogEntry::ToolCard { output, ok, .. } => {
-            let mut r = 1;
-            if !output.is_empty() && *ok {
-                r += lines(output);
-            }
-            r
-        }
-        LogEntry::Meta(text) => lines(text),
-    }
-}
-
 fn draw_chat(f: &mut Frame, area: Rect, app: &mut App) {
     let max_rows = area.height as usize;
-    let total = app.log.len();
-    let busy_rows = if app.busy { 1 } else { 0 };
 
     // Build ALL log lines as styled Paragraph lines. Paragraph wraps long
     // lines at the width (List truncates them — that was the clipping bug),
@@ -1021,15 +1001,13 @@ fn draw_chat(f: &mut Frame, area: Rect, app: &mut App) {
         ]));
     }
 
-    // Estimate total wrapped rows to pin the scroll to the newest content.
-    let mut total_rows: usize = lines.len().min(total);
-    // (Paragraph wraps each line; estimate per original entry for accuracy.)
-    total_rows = app
-        .log
-        .iter()
-        .map(|e| entry_rows(e, area.width as usize))
-        .sum::<usize>()
-        + busy_rows;
+    let paragraph = Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false });
+    // EXACT wrapped row count (same wrapping ratatui uses to render), so the
+    // scroll pin is always precise. A char-based div_ceil estimate drifts
+    // when long words / URLs / markdown wrap to more rows than the estimate
+    // predicts — that pushed new answers to the TOP of the chat box with a
+    // blank gap below.
+    let total_rows = paragraph.line_count(area.width);
 
     // Scroll offset (rows skipped from the top). follow_bottom pins to the
     // newest row; manual scroll-up moves `app.scroll` rows back toward the
@@ -1047,9 +1025,7 @@ fn draw_chat(f: &mut Frame, area: Rect, app: &mut App) {
     // can always be scrolled all the way back to the top.
     app.max_scroll = at_bottom;
 
-    let paragraph = Paragraph::new(lines)
-        .wrap(ratatui::widgets::Wrap { trim: false })
-        .scroll(((chat_offset(total_rows, max_rows, app.follow_bottom, app.scroll)) as u16, 0));
+    let paragraph = paragraph.scroll(((chat_offset(total_rows, max_rows, app.follow_bottom, app.scroll)) as u16, 0));
     f.render_widget(paragraph, area);
 }
 
@@ -1313,5 +1289,61 @@ mod tests {
             )),
             "interrupt must be annotated in the transcript"
         );
+    }
+
+    // --- Exact wrapped-row measurement (the "answers drift to the top" bug) ---
+    // The old char-based div_ceil estimate UNDERCOUNTS rows when long words /
+    // URLs wrap to more rows than the character math predicts, so the scroll
+    // pin pointed above the real bottom and new answers appeared at the top
+    // of the chat box with blank space below. Paragraph::line_count is the
+    // exact count ratatui renders with, so the pin is always precise.
+
+    fn para_rows(text: &str, width: u16) -> (usize, usize) {
+        let old_estimate = text
+            .lines()
+            .map(|l| l.chars().count().div_ceil(width as usize).max(1))
+            .sum::<usize>()
+            .max(1);
+        let exact = ratatui::widgets::Paragraph::new(text.to_string())
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .line_count(width);
+        (old_estimate, exact)
+    }
+
+    #[test]
+    fn long_words_wrap_to_more_rows_than_char_estimate() {
+        // Empirically-proven divergence: whole-word packing reserves rows that
+        // char-based div_ceil misses, so word wrap renders MORE rows.
+        // est=4 (ceil(76/20)) but word-wrap needs 5 rows at width 20.
+        let text = "short short short short longlonglonglonglonglonglonglonglonglonglonglong tail";
+        let (est, exact) = para_rows(text, 20);
+        assert_eq!(est, 4);
+        assert_eq!(exact, 5, "word wrap must need more rows than char math");
+        // Same for irregular word lengths at width 21.
+        let text = "aaaaaaaaaa bbbbbbbbbbbbbbbbbb cccccccc dddddddddd eee ffffffffffffffff gggggggggg";
+        let (est, exact) = para_rows(text, 21);
+        assert_eq!(est, 4);
+        assert_eq!(exact, 5, "mixed word lengths must diverge too");
+    }
+
+    #[test]
+    fn exact_rows_pin_chat_to_bottom() {
+        // The bug: with a char-based estimate the pin sat ABOVE the real
+        // bottom, so the newest answer appeared at the TOP of the chat box
+        // with blank space below. The exact count must align the pin so the
+        // last content row is the last visible row.
+        let width = 20u16;
+        let text = "❯ hello\nshort short short short longlonglonglonglonglonglonglonglonglonglonglong tail\nFinal line.";
+        let (_est, exact) = para_rows(text, width);
+        let max_rows = 3usize; // view smaller than content -> overflow
+        assert!(exact > max_rows, "test text must overflow the view");
+        // Pinned to bottom: offset + visible rows == total content rows.
+        let offset = chat_offset(exact, max_rows, true, 0);
+        assert_eq!(offset + max_rows, exact, "bottom pin must align exactly");
+        // Content that fits the view stays at offset 0 (no blank gap above).
+        let (_, small_exact) = para_rows("hi", width);
+        assert_eq!(chat_offset(small_exact, 10, true, 0), 0);
+        // Scrolling to the very top still reaches row 0.
+        assert_eq!(chat_offset(exact, max_rows, false, exact.saturating_sub(max_rows)), 0);
     }
 }
