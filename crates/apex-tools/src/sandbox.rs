@@ -4,8 +4,7 @@
 //! host state unexpectedly. Uses a temporary workdir + timeout; if a
 //! docker binary is available it can run inside a container.
 
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::time::Duration;
 
 use apex_types::{ToolDef, ToolOutcome};
 use serde_json::{json, Value};
@@ -53,22 +52,24 @@ impl Tool for SandboxTool {
                 // Docker container run: bind the sandbox dir, set workdir.
                 let mut cmd = tokio::process::Command::new("docker");
                 cmd.args(["run", "--rm", "-i", "-v", &format!("{}:/work", sandbox_dir.display()), "-w", "/work", "alpine:latest", "sh", "-c", &command]);
-                cmd.output().await
+                tokio::time::timeout(Duration::from_secs(timeout_s), cmd.output()).await
             } else {
                 // Local run in the sandbox dir with timeout via tokio.
                 let mut cmd = tokio::process::Command::new("sh");
                 cmd.arg("-c").arg(&command).current_dir(&sandbox_dir);
-                cmd.output().await
+                tokio::time::timeout(Duration::from_secs(timeout_s), cmd.output()).await
+            };
+            let output = match result {
+                Ok(Ok(o)) => o,
+                Ok(Err(e)) => return crate::err_outcome("", "sandbox", &anyhow::anyhow!("spawn failed: {e}"), started.elapsed().as_millis() as u64),
+                Err(_) => return crate::err_outcome("", "sandbox", &anyhow::anyhow!("command timed out after {timeout_s}s"), started.elapsed().as_millis() as u64),
             };
 
-            let (stdout, stderr, code) = match result {
-                Ok(o) => (
-                    String::from_utf8_lossy(&o.stdout).to_string(),
-                    String::from_utf8_lossy(&o.stderr).to_string(),
-                    o.status.code().unwrap_or(-1),
-                ),
-                Err(e) => (String::new(), format!("{e:#}"), -1),
-            };
+            let (stdout, stderr, code) = (
+                String::from_utf8_lossy(&output.stdout).to_string(),
+                String::from_utf8_lossy(&output.stderr).to_string(),
+                output.status.code().unwrap_or(-1),
+            );
 
             let _ = std::fs::remove_dir_all(&sandbox_dir);
 

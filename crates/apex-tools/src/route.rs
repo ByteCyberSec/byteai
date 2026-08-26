@@ -55,7 +55,7 @@ impl Tool for RouteTool {
         Box::pin(async move {
             let started = std::time::Instant::now();
             let t = args.get("type").and_then(Value::as_str).unwrap_or("chat").to_string();
-            let task = args.get("task").and_then(Value::as_str).unwrap_or("").to_string();
+            let _task = args.get("task").and_then(Value::as_str).unwrap_or("").to_string();
 
             // 1. Match task type to a preferred model alias.
             let alias = RouteTool::new(ctx.clone())

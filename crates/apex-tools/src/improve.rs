@@ -1,11 +1,10 @@
 //! `improve` — eval-driven autonomous self-improvement loop.
 //! Top self-improvement mechanism (Hermes + Karpathy autoresearch pattern):
 //! run a task's eval, if it fails, use the LLM to diagnose + propose a fix,
-//! apply it, re-run, repeat up to N iterations. Records lessons to durable
-//! memory and optionally creates a skill from the solution.
+//! apply it, re-run, repeat up to N iterations. Records lessons to agent memory
+//! and optionally creates a skill from the solution.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
 
 use apex_types::{ToolDef, ToolOutcome};
 use serde_json::{json, Value};
@@ -14,22 +13,11 @@ use crate::{BoxFuture, Tool, ToolContext};
 
 pub struct ImproveTool {
     pub ctx: ToolContext,
-    lessons: Mutex<Vec<String>>,
 }
 
 impl ImproveTool {
     pub fn new(ctx: ToolContext) -> Self {
-        Self { ctx, lessons: Mutex::new(Vec::new()) }
-    }
-
-    fn load_lessons(&self) -> Vec<String> {
-        self.lessons.lock().unwrap().clone()
-    }
-
-    fn save_lesson(&self, lesson: String) {
-        if let Ok(mut l) = self.lessons.lock() {
-            l.push(lesson);
-        }
+        Self { ctx }
     }
 }
 
@@ -78,7 +66,6 @@ impl Tool for ImproveTool {
             out.push_str(&format!("Improve task: {task}\nEval: {eval_cmd}\nMax iterations: {max_iters}\n\n"));
 
             let mut context = format!("Task: {task}\nThe eval command is: `{eval_cmd}`\n");
-            let mut all_lessons = String::new();
 
             for i in 1..=max_iters {
                 out.push_str(&format!("--- Iteration {i}/{max_iters} ---\n"));
@@ -106,7 +93,6 @@ impl Tool for ImproveTool {
 
                     // Record the lesson to durable memory.
                     let lesson = format!("Lesson: {task} — solved in {i} iteration(s) via eval loop");
-                    all_lessons = lesson.clone();
 
                     if save_skill {
                         out.push_str("Skill saved (simulated — use `skills` tool to persist).\n");
@@ -196,11 +182,6 @@ impl Tool for ImproveTool {
             }
 
             out.push_str(&format!("\nFailed after {max_iters} iterations. Best record above.\n"));
-
-            // Record the failure lesson.
-            if !all_lessons.is_empty() {
-                out.push_str(&format!("\n[LESSON]: {all_lessons}\n"));
-            }
 
             crate::ok_outcome("", "improve", out, started.elapsed().as_millis() as u64)
         })

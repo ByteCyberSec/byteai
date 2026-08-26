@@ -68,7 +68,7 @@ async fn run_check(dir: &PathBuf, name: &str, cmd: &str, args: &[&str]) -> Check
     match output {
         Ok(Ok(out)) => {
             let status = out.status;
-            let mut detail = String::new();
+            let detail;
             if status.success() {
                 let stdout = String::from_utf8_lossy(&out.stdout);
                 let tail: String = stdout.lines().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");

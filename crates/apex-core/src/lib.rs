@@ -188,7 +188,7 @@ impl Agent {
         let capped = self.config.max_iterations;
         let wall = self.config.run_budget_seconds;
         let mut warned = false;
-        let mut exhaustion: Option<String> = None;
+        let mut exhaustion: Option<String>;
 
         loop {
             // --- Interaction budgets (whichever hits first; 0 = unlimited) ---

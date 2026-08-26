@@ -28,7 +28,6 @@ pub struct PluginMeta {
     pub name: String,
     pub description: String,
     pub command: String,
-    pub path: PathBuf,
 }
 
 pub fn parse_plugin(path: &Path) -> Option<PluginMeta> {
@@ -39,7 +38,6 @@ pub fn parse_plugin(path: &Path) -> Option<PluginMeta> {
         name: tool.get("name")?.as_str()?.to_string(),
         description: tool.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
         command: tool.get("command")?.as_str()?.to_string(),
-        path: path.to_path_buf(),
     })
 }
 

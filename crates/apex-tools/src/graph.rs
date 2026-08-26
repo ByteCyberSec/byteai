@@ -186,8 +186,8 @@ Use to understand what depends on what before refactoring.".into(),
                     let mut edges: Vec<(String, String)> = Vec::new();
                     let mut file_imports: HashMap<String, Vec<String>> = HashMap::new();
                     for f in &files {
-                        let Ok(text) = std::fs::read_to_string(f) else { continue };
-                        let Some(lang) = apex_ast::language_for_path(f) else { continue };
+                        let Ok(_) = std::fs::read_to_string(f) else { continue };
+                        let Some(_) = apex_ast::language_for_path(f) else { continue };
                         let Ok(imports) = apex_ast::imports_file(f) else { continue };
                         let rel = f.strip_prefix(&root).unwrap_or(f).display().to_string();
                         file_imports.insert(rel.clone(), imports.clone());

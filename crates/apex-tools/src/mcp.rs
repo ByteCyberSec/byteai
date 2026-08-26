@@ -7,15 +7,12 @@
 //! Protocol: JSON-RPC 2.0 over stdio (local servers) or HTTP POST (remote).
 //! Server config: `~/.byteai/mcp.json` — array of {name, command?, url?}.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use apex_types::{ToolDef, ToolOutcome};
 use serde_json::{json, Value};
 
 use crate::{BoxFuture, Tool};
-
-const MCP_VERSION: &str = "2025-03-26";
 
 /// Loaded MCP server config.
 #[derive(serde::Deserialize, Clone, Default)]
