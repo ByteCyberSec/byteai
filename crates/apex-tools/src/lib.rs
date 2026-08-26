@@ -28,6 +28,7 @@ mod crew;
 mod mcp;
 pub mod schedule;
 mod workflow;
+mod improve;
 pub mod note;
 pub mod read;
 pub mod search;
@@ -136,6 +137,7 @@ impl Registry {
         r.register(Arc::new(mcp::McpTool::new(ctx.data_dir.clone())));
         r.register(Arc::new(schedule::ScheduleTool::new(ctx.data_dir.clone())));
         r.register(Arc::new(workflow::WorkflowTool::new(ctx.data_dir.clone())));
+        r.register(Arc::new(improve::ImproveTool::new(ctx.clone())));
         r
     }
 }
