@@ -29,22 +29,21 @@ const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧
 /// All supported /commands (name, description). Used by the command palette
 /// that appears when the user types `/`.
 const COMMANDS: &[(&str, &str)] = &[
-    ("help", "show commands"),
-    ("model", "show / switch model (e.g. /model name)"),
-    ("models", "list models on provider"),
-    ("provider", "list / switch provider (e.g. /provider name)"),
-    ("addprovider", "add a new provider+model (e.g. /addprovider name url model key)"),
+    ("help", "this message"),
+    ("model", "switch model — scroll-pick or /model <name>"),
+    ("provider", "switch provider — scroll-pick or /provider <name>"),
+    ("addprovider", "add provider+model: /addprovider name url model [key]"),
     ("tools", "list available tools"),
     ("clear", "clear conversation"),
-    ("save", "save session to disk"),
+    ("save", "save session: /save [name]"),
     ("usage", "show token usage"),
-    ("session", "list saved sessions"),
+    ("session", "resume a saved session — scroll-pick"),
     ("config", "show config path"),
     ("keys", "show keybindings"),
     ("route", "route a task to the best model"),
     ("council", "multi-model deliberation vote"),
     ("govern", "constitutional guardrail check"),
-    ("gates", "acceptance ledger: status (default), run, reverify, create"),
+    ("gates", "acceptance ledger: status/run/reverify/create"),
     ("subagent", "spawn parallel subagents"),
     ("swarm", "spawn 3-way swarm"),
     ("quit", "exit"),
@@ -116,6 +115,9 @@ struct App {
     pending_cmd: Option<String>,
     /// Label shown above the input box while a command awaits its argument.
     pending_label: Option<String>,
+    /// Last command run + when (debounce: identical repeats inside 300ms are
+    /// ignored — kills double-Enter/key-repeat duplicates at the source).
+    last_cmd: Option<(String, std::time::Instant)>,
 }
 
 /// A scrollable pick list (Hermes-style): items with underlying values, and
@@ -164,6 +166,7 @@ impl App {
             picker: None,
             pending_cmd: None,
             pending_label: None,
+            last_cmd: None,
             follow_bottom: true,
             max_scroll: 0,
             pending_queue: Vec::new(),
@@ -479,7 +482,21 @@ async fn run_loop(
                     }
                     KeyCode::Enter => {
                         if let Some(p) = app.picker.take() {
-                            run_pick(agent, app, p).await;
+                            // Debounce: identical picker selection within 300ms
+                            // (double-Enter / key repeat) applies only once.
+                            let sig = format!(
+                                "pick:{}",
+                                p.values.get(p.sel.min(p.values.len().saturating_sub(1))).cloned().unwrap_or_default()
+                            );
+                            let fresh = app
+                                .last_cmd
+                                .as_ref()
+                                .map(|(c, t)| !(c == &sig && t.elapsed() < std::time::Duration::from_millis(300)))
+                                .unwrap_or(true);
+                            if fresh {
+                                app.last_cmd = Some((sig, std::time::Instant::now()));
+                                run_pick(agent, app, p).await;
+                            }
                         }
                     }
                     _ => {}
@@ -574,7 +591,17 @@ async fn run_loop(
                             // Ambiguous prefix -> run the highlighted match.
                             cmd_line = matches[app.palette_idx.min(matches.len() - 1)].to_string();
                         }
-                        handle_command(agent, app, &cmd_line).await;
+                        // Debounce: identical command within 300ms (double-Enter
+                        // or key repeat) runs only once.
+                        let fresh = app
+                            .last_cmd
+                            .as_ref()
+                            .map(|(c, t)| !(c == &cmd_line && t.elapsed() < std::time::Duration::from_millis(300)))
+                            .unwrap_or(true);
+                        if fresh {
+                            app.last_cmd = Some((cmd_line.clone(), std::time::Instant::now()));
+                            handle_command(agent, app, &cmd_line).await;
+                        }
                         continue;
                     }
                     spawn_turn(agent, app, &text, true);
@@ -921,24 +948,28 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
     let cmd = parts.first().unwrap_or(&"");
     match *cmd {
         "help" | "h" | "?" | "commands" => {
+            app.add_assistant("┌─ General");
             app.add_assistant("/help           — this message");
+            app.add_assistant("/keys           — show keybindings");
+            app.add_assistant("/tools          — list available tools");
+            app.add_assistant("/config         — show config path");
+            app.add_assistant("/usage          — show token usage");
+            app.add_assistant("/clear          — clear conversation");
+            app.add_assistant("┌─ Model & Provider");
             app.add_assistant("/model <name>   — set + persist model (no arg: scroll-pick)");
-            app.add_assistant("/models         — scroll-pick a model as default");
             app.add_assistant("/provider       — scroll-pick a provider as default");
             app.add_assistant("/addprovider    — add provider+model (e.g. /addprovider name url model)");
-            app.add_assistant("/tools          — list available tools");
-            app.add_assistant("/clear          — clear conversation");
+            app.add_assistant("┌─ Sessions");
             app.add_assistant("/save <name>    — save session to disk");
-            app.add_assistant("/usage          — show token usage");
             app.add_assistant("/session        — scroll-pick a saved session to resume");
-            app.add_assistant("/config         — show config path");
-            app.add_assistant("/keys           — show keybindings");
+            app.add_assistant("┌─ Agent Tools");
             app.add_assistant("/route          — route a task to the best model (asks for it)");
             app.add_assistant("/council        — multi-model deliberation vote (asks for it)");
             app.add_assistant("/govern         — constitutional guardrail check (asks for it)");
             app.add_assistant("/gates          — acceptance ledger (asks for the ledger)");
             app.add_assistant("/subagent       — spawn parallel subagents (asks for the goal)");
             app.add_assistant("/swarm          — spawn 3-way swarm (asks for the goal)");
+            app.add_assistant("┌─ Other");
             app.add_assistant("/quit           — exit");
             app.add_assistant("");
             app.add_assistant("  pickers: ↑↓ scroll · Enter select · Esc cancel");
@@ -1594,7 +1625,7 @@ mod tests {
     #[test]
     fn every_palette_command_is_handled() {
         let handled = [
-            "help", "model", "models", "provider", "addprovider", "tools",
+            "help", "model", "provider", "addprovider", "tools",
             "clear", "save", "usage", "session", "config", "keys", "gates",
             "subagent", "swarm", "route", "council", "govern", "quit",
         ];
@@ -1608,6 +1639,33 @@ mod tests {
                 "handler for /{name} missing from COMMANDS palette"
             );
         }
+    }
+
+    #[test]
+    fn command_debounce_rejects_rapid_repeat() {
+        let mut app = App::new("m1".into(), "p1".into(), 3);
+        // First run: accepted, timestamp recorded.
+        let fresh = app
+            .last_cmd
+            .as_ref()
+            .map(|(c, t)| !(c == "help" && t.elapsed() < std::time::Duration::from_millis(300)))
+            .unwrap_or(true);
+        assert!(fresh);
+        app.last_cmd = Some(("help".to_string(), std::time::Instant::now()));
+        // Immediate repeat within 300ms: rejected (the double-output guard).
+        let repeat = app
+            .last_cmd
+            .as_ref()
+            .map(|(c, t)| !(c == "help" && t.elapsed() < std::time::Duration::from_millis(300)))
+            .unwrap_or(true);
+        assert!(!repeat, "rapid identical repeat must be debounced");
+        // A different command is never debounced.
+        let other = app
+            .last_cmd
+            .as_ref()
+            .map(|(c, t)| !(c == "models" && t.elapsed() < std::time::Duration::from_millis(300)))
+            .unwrap_or(true);
+        assert!(other, "different command must not be debounced");
     }
 
     #[test]
@@ -1670,8 +1728,8 @@ mod tests {
         // Unique prefix.
         assert_eq!(matching_commands("prov"), vec!["provider"]);
         assert_eq!(matching_commands("hel"), vec!["help"]);
-        // Ambiguous prefix (model, models).
-        assert_eq!(matching_commands("mo"), vec!["model", "models"]);
+        // Prefix matching one command only (models was merged into model).
+        assert_eq!(matching_commands("mo"), vec!["model"]);
         // No match.
         assert!(matching_commands("zzz").is_empty());
     }
