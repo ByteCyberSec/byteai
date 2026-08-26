@@ -570,6 +570,9 @@ async fn run_loop(
                 }
                 KeyCode::Enter => {
                     let text = app.input.trim().to_string();
+                    // Capture the highlighted palette index BEFORE resetting —
+                    // Enter on a palette item must run THAT item, not matches[0].
+                    let sel = app.palette_idx;
                     app.input.clear();
                     app.is_command = false;
                     app.palette_idx = 0;
@@ -594,13 +597,13 @@ async fn run_loop(
                             // so /model xyz etc. still work after the name.
                         } else if cmd_line.is_empty() && !matches.is_empty() {
                             // Just "/" -> run the highlighted palette command.
-                            cmd_line = matches[app.palette_idx.min(matches.len() - 1)].to_string();
+                            cmd_line = matches[sel.min(matches.len() - 1)].to_string();
                         } else if matches.len() == 1 && matches[0] != cmd_line {
                             // Unique prefix -> complete to the full command.
                             cmd_line = matches[0].to_string();
                         } else if matches.len() > 1 && !matches.contains(&cmd_line.as_str()) {
                             // Ambiguous prefix -> run the highlighted match.
-                            cmd_line = matches[app.palette_idx.min(matches.len() - 1)].to_string();
+                            cmd_line = matches[sel.min(matches.len() - 1)].to_string();
                         }
                         // Debounce: identical command within 300ms (double-Enter
                         // or key repeat) runs only once.
