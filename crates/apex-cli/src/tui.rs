@@ -787,67 +787,47 @@ fn entry_rows(e: &LogEntry, width: usize) -> usize {
 
 fn draw_chat(f: &mut Frame, area: Rect, app: &App) {
     let max_rows = area.height as usize;
-    let width = area.width as usize;
     let total = app.log.len();
     let busy_rows = if app.busy { 1 } else { 0 };
 
-    // Build the visible window from the BOTTOM so the newest content (the
-    // final words of the answer) is always fully on screen. Count *rows*,
-    // not entries — entries wrap, so slicing by entry count clips the tail.
-    let end = if app.follow_bottom {
-        total
-    } else {
-        total.saturating_sub(app.scroll)
-    };
-
-    let mut rows_used = busy_rows;
-    let mut idx = end;
-    while idx > 0 {
-        let i = idx - 1;
-        let rows = entry_rows(&app.log[i], width);
-        if rows_used + rows > max_rows {
-            break;
-        }
-        rows_used += rows;
-        idx = i;
-    }
-    let start = idx;
-
-    let mut items: Vec<ListItem> = Vec::new();
-    for i in start..end {
-        match &app.log[i] {
+    // Build ALL log lines as styled Paragraph lines. Paragraph wraps long
+    // lines at the width (List truncates them — that was the clipping bug),
+    // so every word of an answer stays on screen.
+    let mut lines: Vec<Line> = Vec::new();
+    for entry in &app.log {
+        match entry {
             LogEntry::Text { content, style } => {
-                items.push(ListItem::new(Line::from(Span::styled(content.clone(), *style))));
+                lines.push(Line::from(Span::styled(content.clone(), *style)));
             }
             LogEntry::Assistant(content) => {
-                items.push(ListItem::new(Line::from(Span::styled(
+                lines.push(Line::from(Span::styled(
                     content.clone(),
                     Style::default().fg(Color::White),
-                ))));
+                )));
             }
             LogEntry::ToolCard { name, ok, elapsed_ms, output } => {
                 let icon = if *ok { "✓" } else { "✗" };
                 let color = if *ok { Color::Yellow } else { Color::Red };
-                items.push(ListItem::new(Line::from(vec![
+                lines.push(Line::from(vec![
                     Span::styled("  [tool] ", Style::default().fg(Color::DarkGray)),
                     Span::styled(name.clone(), Style::default().fg(color).add_modifier(Modifier::BOLD)),
                     Span::raw(" "),
                     Span::styled(icon, Style::default().fg(color)),
                     Span::raw(" "),
                     Span::styled(format!("({elapsed_ms} ms)"), Style::default().fg(Color::DarkGray)),
-                ])));
+                ]));
                 if !output.is_empty() && *ok {
-                    items.push(ListItem::new(Line::from(Span::styled(
+                    lines.push(Line::from(Span::styled(
                         format!("         {output}"),
                         Style::default().fg(Color::DarkGray),
-                    ))));
+                    )));
                 }
             }
             LogEntry::Meta(text) => {
-                items.push(ListItem::new(Line::from(Span::styled(
+                lines.push(Line::from(Span::styled(
                     text.clone(),
                     Style::default().fg(Color::DarkGray),
-                ))));
+                )));
             }
         }
     }
@@ -857,14 +837,35 @@ fn draw_chat(f: &mut Frame, area: Rect, app: &App) {
     if app.busy {
         let sp = SPINNER[(app.spinner_frame / 2) % SPINNER.len()];
         let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(0);
-        items.push(ListItem::new(Line::from(vec![
+        lines.push(Line::from(vec![
             Span::styled(format!(" {sp} "), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::styled(format!("{secs}s working…"), Style::default().fg(Color::Yellow)),
-        ])));
+        ]));
     }
 
-    let list = List::new(items).block(Block::default().borders(Borders::NONE));
-    f.render_widget(list, area);
+    // Estimate total wrapped rows to pin the scroll to the newest content.
+    let mut total_rows: usize = lines.len().min(total);
+    // (Paragraph wraps each line; estimate per original entry for accuracy.)
+    total_rows = app
+        .log
+        .iter()
+        .map(|e| entry_rows(e, area.width as usize))
+        .sum::<usize>()
+        + busy_rows;
+
+    // Scroll offset (rows skipped from the top). follow_bottom pins to the
+    // newest row; manual scroll goes `app.scroll` lines up from the bottom.
+    let at_bottom = total_rows.saturating_sub(max_rows);
+    let offset = if app.follow_bottom {
+        at_bottom
+    } else {
+        at_bottom.saturating_add(app.scroll)
+    };
+
+    let paragraph = Paragraph::new(lines)
+        .wrap(ratatui::widgets::Wrap { trim: false })
+        .scroll(((offset.min(total_rows)) as u16, 0));
+    f.render_widget(paragraph, area);
 }
 
 /// Command palette shown while typing `/` (jcode-style autocomplete).
