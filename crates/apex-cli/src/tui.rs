@@ -108,6 +108,31 @@ struct App {
     spinner_frame: usize,
     /// Selected command palette index (0-based, 0 = first match).
     palette_idx: usize,
+    /// Interactive scroll-picker for list commands (/models, /provider,
+    /// /session, /gates). When set, Up/Down/Enter/Esc drive the list.
+    picker: Option<Picker>,
+    /// Command awaiting one more argument (Hermes-style prompt): when set,
+    /// the next Enter sends the typed text as the command's argument.
+    pending_cmd: Option<String>,
+    /// Label shown above the input box while a command awaits its argument.
+    pending_label: Option<String>,
+}
+
+/// A scrollable pick list (Hermes-style): items with underlying values, and
+/// the action to run on Enter.
+struct Picker {
+    title: String,
+    items: Vec<String>,
+    values: Vec<String>,
+    sel: usize,
+    action: PickAction,
+}
+
+enum PickAction {
+    SetModel { provider: String },
+    SwitchProvider,
+    ResumeSession,
+    GatesStatus,
 }
 
 impl App {
@@ -136,6 +161,9 @@ impl App {
             busy_since: None,
             spinner_frame: 0,
             palette_idx: 0,
+            picker: None,
+            pending_cmd: None,
+            pending_label: None,
             follow_bottom: true,
             max_scroll: 0,
             pending_queue: Vec::new(),
@@ -432,6 +460,32 @@ async fn run_loop(
                 }
                 break;
             }
+            // Interactive picker: Up/Down/Enter/Esc drive the list.
+            if app.picker.is_some() {
+                match key.code {
+                    KeyCode::Esc => {
+                        app.picker = None;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if let Some(p) = app.picker.as_mut() {
+                            p.sel = p.sel.saturating_sub(1);
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if let Some(p) = app.picker.as_mut() {
+                            let n = p.items.len().max(1);
+                            p.sel = (p.sel + 1).min(n - 1);
+                        }
+                    }
+                    KeyCode::Enter => {
+                        if let Some(p) = app.picker.take() {
+                            run_pick(agent, app, p).await;
+                        }
+                    }
+                    _ => {}
+                }
+                continue;
+            }
             // Ctrl+Shift+K / Ctrl+Shift+J: scroll up/down (jcode).
             if key.code == KeyCode::Char('k') && key.modifiers.contains(KeyModifiers::CONTROL) && key.modifiers.contains(KeyModifiers::SHIFT) {
                 app.follow_bottom = false;
@@ -482,6 +536,8 @@ async fn run_loop(
                         app.input.clear();
                         app.is_command = false;
                         app.palette_idx = 0;
+                        app.pending_cmd = None;
+                        app.pending_label = None;
                     }
                 }
                 KeyCode::Enter => {
@@ -490,6 +546,14 @@ async fn run_loop(
                     app.is_command = false;
                     app.palette_idx = 0;
                     if text.is_empty() {
+                        continue;
+                    }
+                    // Hermes-style prompt: if a command is awaiting its argument,
+                    // send the typed text as that argument.
+                    if let Some(cmd) = app.pending_cmd.take() {
+                        app.pending_label = None;
+                        let full = format!("{cmd} {text}");
+                        handle_command(agent, app, full.trim()).await;
                         continue;
                     }
                     // In command mode, Enter runs the selected palette command
@@ -673,6 +737,139 @@ fn interrupt_turn(app: &mut App, how: &str) {
     app.add_meta(&format!("  ⚡ interrupted ({how})"));
 }
 
+/// Execute the selected picker item — the command's final, user-friendly
+/// purpose (set default model, switch provider, resume session, inspect a
+/// gate ledger).
+async fn run_pick(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, pick: Picker) {
+    let idx = pick.sel.min(pick.values.len().saturating_sub(1));
+    match pick.action {
+        PickAction::SetModel { provider } => {
+            let m = pick.values[idx].clone();
+            let mut cfg = crate::config::load().unwrap_or_default();
+            if let Err(e) = crate::config::set_model(&mut cfg, &provider, &m) {
+                app.add_error(&format!("  could not persist model: {e:#}"));
+            }
+            agent.lock().await.config.model = m.clone();
+            app.model = m.clone();
+            // Keep the Ctrl+Tab cycle in sync with the new default.
+            if let Some(pos) = app.models.iter().position(|x| x == &m) {
+                app.model_idx = pos;
+            }
+            app.add_meta(format!("  model -> {m} (saved as default)"));
+        }
+        PickAction::SwitchProvider => {
+            let name = pick.values[idx].clone();
+            let cfg = crate::config::load().unwrap_or_default();
+            let provider = crate::config::resolve_provider(&cfg, Some(&name), None, None);
+            if provider.name != name {
+                app.add_error(&format!("  provider '{name}' not found"));
+                return;
+            }
+            match apex_provider::Client::new(provider.base_url.clone(), provider.resolved_key()) {
+                Ok(client) => {
+                    let mut cfg2 = crate::config::load().unwrap_or_default();
+                    let _ = crate::config::set_default_provider(&mut cfg2, &name);
+                    let model = crate::config::resolve_model(&cfg, None, &provider);
+                    {
+                        let mut g = agent.lock().await;
+                        g.provider = client;
+                        g.config.model = model.clone();
+                    }
+                    app.provider = name.clone();
+                    app.model = model.clone();
+                    if let Ok(ids) = agent.lock().await.provider.list_models().await {
+                        app.models = ids;
+                        if let Some(pos) = app.models.iter().position(|x| x == &model) {
+                            app.model_idx = pos;
+                        }
+                    }
+                    app.add_meta(format!("  provider -> {name} · model -> {model} (saved as default)"));
+                }
+                Err(e) => app.add_error(&format!("  provider {name}: {e:#}")),
+            }
+        }
+        PickAction::ResumeSession => {
+            let id = pick.values[idx].clone();
+            match crate::session::load(&id) {
+                Ok(sf) => {
+                    let msgs = sf.messages.clone();
+                    let model = sf.model.clone();
+                    {
+                        let mut g = agent.lock().await;
+                        g.history = msgs.clone();
+                        g.config.model = model.clone();
+                    }
+                    app.model = model;
+                    app.clear();
+                    for m in msgs.iter().take(400) {
+                        match m.role {
+                            apex_types::Role::User => {
+                                app.add_user(m.content.as_deref().unwrap_or(""));
+                            }
+                            _ => {
+                                if let Some(c) = &m.content {
+                                    app.add_assistant(c);
+                                }
+                            }
+                        }
+                    }
+                    app.add_meta(format!("  resumed session {id} ({} msgs)", msgs.len()));
+                }
+                Err(e) => app.add_error(&format!("  could not load session: {e:#}")),
+            }
+        }
+        PickAction::GatesStatus => {
+            let path = pick.values[idx].clone();
+            let g = agent.lock().await;
+            let tool = g.tools.get("gates");
+            drop(g);
+            match tool {
+                Some(tool) => {
+                    let args = serde_json::json!({"action": "status", "path": path});
+                    let outcome = tool.execute(args).await;
+                    app.add_tool_card(&outcome.name, outcome.ok, outcome.elapsed_ms, &outcome.output);
+                }
+                None => app.add_error("gates tool not available"),
+            }
+        }
+    }
+}
+
+/// Find gate ledgers (GATES.md at cwd root or under .unlazy/<scope>/gates/)
+/// for the /gates picker.
+fn find_gate_files(root: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let root = std::path::Path::new(root);
+    let root_ledger = root.join("GATES.md");
+    if root_ledger.is_file() {
+        found.push(root_ledger.display().to_string());
+    }
+    let unlazy = root.join(".unlazy");
+    if unlazy.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&unlazy) {
+            for e in entries.flatten() {
+                let p = e.path();
+                let gates_dir = p.join("gates");
+                if gates_dir.is_dir() {
+                    if let Ok(gates) = std::fs::read_dir(&gates_dir) {
+                        for g in gates.flatten() {
+                            let gp = g.path();
+                            if gp.is_file() && gp.extension().map(|x| x == "md").unwrap_or(false) {
+                                found.push(gp.display().to_string());
+                            }
+                        }
+                    }
+                }
+                let plan = p.join("GATES.md");
+                if plan.is_file() {
+                    found.push(plan.display().to_string());
+                }
+            }
+        }
+    }
+    found
+}
+
 /// Spawn the agent turn in a background task; stream events via a channel
 /// so the UI stays responsive with a spinner + live token rendering.
 fn spawn_turn(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, text: &str, echo: bool) {
@@ -725,74 +922,79 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
     match *cmd {
         "help" | "h" | "?" | "commands" => {
             app.add_assistant("/help           — this message");
-            app.add_assistant("/model <name>   — show / switch / persist model");
-            app.add_assistant("/models         — list models on provider");
-            app.add_assistant("/provider       — list / switch / persist provider");
+            app.add_assistant("/model <name>   — set + persist model (no arg: scroll-pick)");
+            app.add_assistant("/models         — scroll-pick a model as default");
+            app.add_assistant("/provider       — scroll-pick a provider as default");
             app.add_assistant("/addprovider    — add provider+model (e.g. /addprovider name url model)");
             app.add_assistant("/tools          — list available tools");
             app.add_assistant("/clear          — clear conversation");
             app.add_assistant("/save <name>    — save session to disk");
             app.add_assistant("/usage          — show token usage");
-            app.add_assistant("/session        — list saved sessions");
+            app.add_assistant("/session        — scroll-pick a saved session to resume");
             app.add_assistant("/config         — show config path");
             app.add_assistant("/keys           — show keybindings");
-            app.add_assistant("/route          — route a task to the best model");
-            app.add_assistant("/council        — multi-model deliberation vote");
-            app.add_assistant("/govern         — constitutional guardrail check");
-            app.add_assistant("/gates          — acceptance ledger (status/run/reverify/create)");
-            app.add_assistant("/subagent       — spawn parallel subagents");
-            app.add_assistant("/swarm          — spawn 3-way swarm");
+            app.add_assistant("/route          — route a task to the best model (asks for it)");
+            app.add_assistant("/council        — multi-model deliberation vote (asks for it)");
+            app.add_assistant("/govern         — constitutional guardrail check (asks for it)");
+            app.add_assistant("/gates          — acceptance ledger (asks for the ledger)");
+            app.add_assistant("/subagent       — spawn parallel subagents (asks for the goal)");
+            app.add_assistant("/swarm          — spawn 3-way swarm (asks for the goal)");
             app.add_assistant("/quit           — exit");
+            app.add_assistant("");
+            app.add_assistant("  pickers: ↑↓ scroll · Enter select · Esc cancel");
         }
-        "model" => {
-            if let Some(m) = parts.get(1) {
-                let m = m.to_string();
-                // Persist so the choice survives restart (agent + provider).
-                let mut cfg = crate::config::load().unwrap_or_default();
-                if let Err(e) = crate::config::set_model(&mut cfg, &app.provider, &m) {
-                    app.add_error(&format!("  could not persist model: {e:#}"));
-                }
-                agent.lock().await.config.model = m.clone();
-                app.model = m.clone();
-                app.add_meta(format!("  model -> {m}"));
-            } else {
-                app.add_meta(format!("  model = {}", agent.lock().await.config.model));
-                // Show models available on the current provider (best-effort).
-                match agent.lock().await.provider.list_models().await {
-                    Ok(ids) => {
-                        app.models = ids.clone();
-                        app.add_meta(format!(
-                            "  {} models on {}: {}",
-                            ids.len(),
-                            app.provider,
-                            ids.join(", ")
-                        ));
+        "model" | "models" => {
+            if *cmd == "model" {
+                if let Some(m) = parts.get(1) {
+                    let m = m.to_string();
+                    // Persist so the choice survives restart (agent + provider).
+                    let mut cfg = crate::config::load().unwrap_or_default();
+                    if let Err(e) = crate::config::set_model(&mut cfg, &app.provider, &m) {
+                        app.add_error(&format!("  could not persist model: {e:#}"));
                     }
-                    Err(_) => app.add_meta("  (provider model list offline)"),
+                    agent.lock().await.config.model = m.clone();
+                    app.model = m.clone();
+                    if let Some(pos) = app.models.iter().position(|x| x == &m) {
+                        app.model_idx = pos;
+                    }
+                    app.add_meta(format!("  model -> {m} (saved as default)"));
+                    return;
                 }
             }
-        }
-        "models" => {
+            // No argument: interactive picker — scroll, Enter sets + persists.
             match agent.lock().await.provider.list_models().await {
-                Ok(ids) => {
+                Ok(ids) if !ids.is_empty() => {
                     app.models = ids.clone();
-                    app.add_meta(format!("  {} models: {}", ids.len(), ids.join(", ")));
+                    let sel = ids.iter().position(|x| x == &app.model).unwrap_or(0);
+                    app.picker = Some(Picker {
+                        title: format!("models on {} — scroll, Enter sets default", app.provider),
+                        items: ids.clone(),
+                        values: ids,
+                        sel,
+                        action: PickAction::SetModel { provider: app.provider.clone() },
+                    });
                 }
-                Err(e) => app.add_error(&format!("list_models failed: {e:#}")),
+                Ok(_) => app.add_meta("  no models reported by provider"),
+                Err(_) => app.add_meta("  (provider model list offline)"),
             }
         }
         "provider" => {
             let cfg = crate::config::load().unwrap_or_default();
             match parts.get(1).copied() {
                 None => {
-                    app.add_meta(format!("  provider = {}", app.provider));
-                    app.add_meta("  configured providers:");
-                    for p in &cfg.providers {
-                        let cur = if p.name == app.provider { " ▸" } else { "  " };
+                    // Interactive picker: scroll, Enter switches + persists.
+                    let items: Vec<String> = cfg.providers.iter().map(|p| {
+                        let cur = if p.name == app.provider { "▸ " } else { "  " };
                         let key = if p.resolved_key().is_empty() { " (no key)" } else { "" };
-                        app.add_meta(format!("  {cur} {}{key}", p.name));
-                    }
-                    app.add_meta("  switch: /provider <name> · add: /addprovider <name> <url> <model> [key]");
+                        format!("{cur}{}{key}", p.name)
+                    }).collect();
+                    let values: Vec<String> = cfg.providers.iter().map(|p| p.name.clone()).collect();
+                    let sel = values.iter().position(|x| x == &app.provider).unwrap_or(0);
+                    app.picker = Some(Picker {
+                        title: "providers — scroll, Enter switches default".into(),
+                        items, values, sel,
+                        action: PickAction::SwitchProvider,
+                    });
                 }
                 Some(name) => {
                     // Switch provider at runtime: rebuild the client and model.
@@ -869,17 +1071,36 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
         }
         "gates" => {
             let action = parts.get(1).copied().unwrap_or("status").to_string();
-            let path = parts.get(2).map(|s| s.to_string()).unwrap_or_else(|| "GATES.md".to_string());
-            let g = agent.lock().await;
-            let tool = g.tools.get("gates");
-            drop(g);
-            match tool {
-                Some(tool) => {
-                    let args = serde_json::json!({"action": action, "path": path});
-                    let outcome = tool.execute(args).await;
-                    app.add_tool_card(&outcome.name, outcome.ok, outcome.elapsed_ms, &outcome.output);
+            let path = parts.get(2).map(|s| s.to_string());
+            match path {
+                Some(path) => {
+                    let g = agent.lock().await;
+                    let tool = g.tools.get("gates");
+                    drop(g);
+                    match tool {
+                        Some(tool) => {
+                            let args = serde_json::json!({"action": action, "path": path});
+                            let outcome = tool.execute(args).await;
+                            app.add_tool_card(&outcome.name, outcome.ok, outcome.elapsed_ms, &outcome.output);
+                        }
+                        None => app.add_error("gates tool not available"),
+                    }
                 }
-                None => app.add_error("gates tool not available"),
+                None => {
+                    // No path: pick a gate ledger found in the workspace.
+                    let found = find_gate_files(".");
+                    if found.is_empty() {
+                        app.add_meta("  no GATES.md found in cwd — use: /gates status <path>");
+                    } else {
+                        app.picker = Some(Picker {
+                            title: format!("gate ledgers — scroll, Enter to {action}"),
+                            items: found.clone(),
+                            values: found,
+                            sel: 0,
+                            action: PickAction::GatesStatus,
+                        });
+                    }
+                }
             }
         }
         "clear" | "new" => {
@@ -900,17 +1121,20 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
         }
         "session" | "sessions" => {
             match crate::session::list() {
-                Ok(list) if list.is_empty() => app.add_meta("  no saved sessions"),
+                Ok(list) if list.is_empty() => app.add_meta("  no saved sessions — type /save to save"),
                 Ok(list) => {
-                    for s in list.iter().take(10) {
+                    let items: Vec<String> = list.iter().map(|s| {
                         let msgs = s.messages.len();
                         let last = s.messages.last().and_then(|m| m.content.clone()).unwrap_or_default();
-                        let preview: String = last.chars().take(50).collect();
-                        app.add_meta(format!("  {} · {msgs} msgs · {preview}", s.id));
-                    }
-                    if list.len() > 10 {
-                        app.add_meta(format!("  ... {} more", list.len() - 10));
-                    }
+                        let preview: String = last.chars().take(40).collect();
+                        format!("{} · {msgs} msgs · {preview}", s.id)
+                    }).collect();
+                    let values: Vec<String> = list.iter().map(|s| s.id.clone()).collect();
+                    app.picker = Some(Picker {
+                        title: "sessions — scroll, Enter resumes".into(),
+                        items, values, sel: 0,
+                        action: PickAction::ResumeSession,
+                    });
                 }
                 Err(e) => app.add_error(&format!("session list failed: {e:#}")),
             }
@@ -934,7 +1158,13 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
         }
         "subagent" | "swarm" => {
             let count = if *cmd == "swarm" { 3 } else { 1 };
-            let goal = parts.get(1).map(|s| s.to_string()).unwrap_or_else(|| "Review the current workspace".to_string());
+            let goal = parts.get(1..).unwrap_or(&[]).join(" ");
+            if goal.is_empty() {
+                app.pending_cmd = Some(cmd.to_string());
+                app.pending_label = Some(format!("{cmd} <goal> — spawns {count} subagent(s)"));
+                app.add_meta("  type the goal for the subagent(s), then Enter (Esc cancels)");
+                return;
+            }
             app.add_meta(format!("  spawning {count} subagent(s): {goal}"));
             let g = agent.lock().await;
             let names = g.tools.names();
@@ -958,6 +1188,12 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
         "route" => {
             let task_type = parts.get(1).copied().unwrap_or("chat");
             let task = parts.get(2..).unwrap_or(&[]).join(" ");
+            if task.is_empty() {
+                app.pending_cmd = Some("route".to_string());
+                app.pending_label = Some(format!("route <task> — first word = task type (default {task_type})"));
+                app.add_meta("  type the task to route, then Enter (Esc cancels)");
+                return;
+            }
             app.add_meta(format!("  routing task type '{task_type}'…"));
             let g = agent.lock().await;
             let tool = g.tools.get("route");
@@ -974,38 +1210,42 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
         "council" => {
             let question = parts.get(1..).unwrap_or(&[]).join(" ");
             if question.is_empty() {
-                app.add_error("usage: /council <question>");
-            } else {
-                app.add_meta("  convening council…");
-                let g = agent.lock().await;
-                let tool = g.tools.get("council");
-                drop(g);
-                match tool {
-                    Some(tool) => {
-                        let args = serde_json::json!({"question": question});
-                        let outcome = tool.execute(args).await;
-                        app.add_tool_card(&outcome.name, outcome.ok, outcome.elapsed_ms, &outcome.output);
-                    }
-                    None => app.add_error("council tool not available"),
+                app.pending_cmd = Some("council".to_string());
+                app.pending_label = Some("council <question>".to_string());
+                app.add_meta("  type the question for the council, then Enter (Esc cancels)");
+                return;
+            }
+            app.add_meta("  convening council…");
+            let g = agent.lock().await;
+            let tool = g.tools.get("council");
+            drop(g);
+            match tool {
+                Some(tool) => {
+                    let args = serde_json::json!({"question": question});
+                    let outcome = tool.execute(args).await;
+                    app.add_tool_card(&outcome.name, outcome.ok, outcome.elapsed_ms, &outcome.output);
                 }
+                None => app.add_error("council tool not available"),
             }
         }
         "govern" => {
             let action = parts.get(1..).unwrap_or(&[]).join(" ");
             if action.is_empty() {
-                app.add_error("usage: /govern <action to check>");
-            } else {
-                let g = agent.lock().await;
-                let tool = g.tools.get("govern");
-                drop(g);
-                match tool {
-                    Some(tool) => {
-                        let args = serde_json::json!({"action": action});
-                        let outcome = tool.execute(args).await;
-                        app.add_tool_card(&outcome.name, outcome.ok, outcome.elapsed_ms, &outcome.output);
-                    }
-                    None => app.add_error("govern tool not available"),
+                app.pending_cmd = Some("govern".to_string());
+                app.pending_label = Some("govern <action to check>".to_string());
+                app.add_meta("  type the action to check, then Enter (Esc cancels)");
+                return;
+            }
+            let g = agent.lock().await;
+            let tool = g.tools.get("govern");
+            drop(g);
+            match tool {
+                Some(tool) => {
+                    let args = serde_json::json!({"action": action});
+                    let outcome = tool.execute(args).await;
+                    app.add_tool_card(&outcome.name, outcome.ok, outcome.elapsed_ms, &outcome.output);
                 }
+                None => app.add_error("govern tool not available"),
             }
         }
         other => {
@@ -1051,6 +1291,10 @@ fn draw(f: &mut Frame, app: &mut App) {
         } else {
             0
         }
+    } else if app.picker.is_some() {
+        // Picker window: border + title + up to 12 items + hint row.
+        let n = app.picker.as_ref().map(|p| p.items.len()).unwrap_or(0);
+        (n.min(12) as u16) + 2 + if n > 12 { 1 } else { 0 }
     } else {
         0
     };
@@ -1067,7 +1311,9 @@ fn draw(f: &mut Frame, app: &mut App) {
 
     draw_header(f, chunks[0], app);
     draw_chat(f, chunks[1], app);
-    if palette_h > 0 {
+    if let Some(p) = &app.picker {
+        draw_picker(f, chunks[2], p);
+    } else if palette_h > 0 {
         draw_palette(f, chunks[2], app);
     }
     draw_input(f, chunks[3], app);
@@ -1245,8 +1491,45 @@ fn draw_palette(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_widget(list, area);
 }
 
+/// Interactive picker (models, providers, sessions, gate ledgers).
+/// Renders a scrollable list with title; Enter selects, Esc cancels.
+fn draw_picker(f: &mut Frame, area: Rect, pick: &Picker) {
+    let n = pick.items.len();
+    let max = area.height.saturating_sub(2) as usize; // minus border
+    let show_hint = n > max;
+    let visible = if show_hint { max.max(1) } else { max };
+    let (offset, count) = palette_window(n, pick.sel, visible);
+    let sel = pick.sel.min(n.saturating_sub(1));
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (k, item) in pick.items.iter().enumerate().skip(offset).take(count) {
+        let selected = k == sel;
+        let style = if selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let label = if selected { format!(" ▸ {item}") } else { format!("   {item}") };
+        lines.push(Line::from(Span::styled(label, style)));
+    }
+    if show_hint {
+        lines.push(Line::from(Span::styled(
+            format!("   ↑↓ scroll · {n} items"),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .title(Span::styled(
+            format!(" {} ", pick.title),
+            Style::default().fg(Color::Cyan),
+        ));
+    let list = List::new(lines).block(block);
+    f.render_widget(list, area);
+}
+
 fn draw_input(f: &mut Frame, area: Rect, app: &App) {
-    let prefix = if app.is_command { " / " } else { "> " };
+    let prefix = if app.is_command { " / " } else if app.pending_cmd.is_some() { "  > " } else { "> " };
     let display = format!("{prefix}{}", app.input);
 
     // Hard-wrap the display at the inner box width: ratatui's soft-wrap
@@ -1267,7 +1550,15 @@ fn draw_input(f: &mut Frame, area: Rect, app: &App) {
     let scroll = total_rows.saturating_sub(visible_rows);
 
     let input = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).style(Style::default()))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .style(Style::default())
+                .title(Span::styled(
+                    app.pending_label.as_deref().unwrap_or(""),
+                    Style::default().fg(Color::Yellow),
+                )),
+        )
         .scroll((scroll as u16, 0))
         .style(Style::default().fg(Color::White));
     f.render_widget(input, area);
@@ -1326,6 +1617,50 @@ mod tests {
         for w in names.windows(2) {
             assert_ne!(w[0], w[1], "duplicate command /{}", w[0]);
         }
+    }
+
+    #[test]
+    fn find_gate_files_discovers_ledgers() {
+        let dir = std::env::temp_dir().join(format!("byteai-gates-find-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".unlazy/scope1/gates")).unwrap();
+        std::fs::create_dir_all(dir.join(".unlazy/scope2")).unwrap();
+        std::fs::write(dir.join("GATES.md"), "# Gates: root\n").unwrap();
+        std::fs::write(dir.join(".unlazy/scope1/gates/leaf-1.1.md"), "# Gates: leaf\n").unwrap();
+        std::fs::write(dir.join(".unlazy/scope1/gates/leaf-1.2.md"), "# Gates: leaf2\n").unwrap();
+        std::fs::write(dir.join(".unlazy/scope2/GATES.md"), "# Gates: plan\n").unwrap();
+        let found = find_gate_files(dir.to_str().unwrap());
+        assert_eq!(found.len(), 4, "found: {found:?}");
+        assert!(found.iter().any(|p| p.ends_with("GATES.md")), "{found:?}");
+        assert!(found.iter().any(|p| p.contains("leaf-1.1")), "{found:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn picker_selection_clamps() {
+        let mut app = App::new("m1".into(), "p1".into(), 3);
+        app.picker = Some(Picker {
+            title: "t".into(),
+            items: vec!["a".into(), "b".into(), "c".into()],
+            values: vec!["a".into(), "b".into(), "c".into()],
+            sel: 0,
+            action: PickAction::SetModel { provider: "p1".into() },
+        });
+        // Simulate Down×10: clamps to last item.
+        for _ in 0..10 {
+            if let Some(p) = app.picker.as_mut() {
+                let n = p.items.len().max(1);
+                p.sel = (p.sel + 1).min(n - 1);
+            }
+        }
+        assert_eq!(app.picker.as_ref().unwrap().sel, 2);
+        // Simulate Up×10: clamps to first item.
+        for _ in 0..10 {
+            if let Some(p) = app.picker.as_mut() {
+                p.sel = p.sel.saturating_sub(1);
+            }
+        }
+        assert_eq!(app.picker.as_ref().unwrap().sel, 0);
     }
 
     #[test]
