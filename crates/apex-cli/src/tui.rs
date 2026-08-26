@@ -74,6 +74,9 @@ struct App {
     /// When true, new content auto-scrolls to the bottom. Set false on
     /// manual scroll-up, reset true on scroll-down to bottom or new user msg.
     follow_bottom: bool,
+    /// Prompts queued while a turn is still running; auto-sent in order
+    /// when the current turn finishes so questions are never dropped.
+    pending_queue: Vec<String>,
     model: String,
     provider: String,
     tools_count: usize,
@@ -113,6 +116,7 @@ impl App {
             spinner_frame: 0,
             palette_idx: 0,
             follow_bottom: true,
+            pending_queue: Vec::new(),
         };
         app.push_banner();
         app
@@ -222,6 +226,7 @@ impl App {
 
     fn clear(&mut self) {
         self.log.clear();
+        self.pending_queue.clear();
         self.push_banner();
         self.scroll = 0;
         self.follow_bottom = true;
@@ -315,6 +320,13 @@ async fn run_loop(
         terminal.draw(|f| draw(f, app))?;
         app.drain();
 
+        // Auto-run any queued prompts once the current turn finishes, in
+        // the order they were typed (echo=false: already shown in chat).
+        if !app.busy && app.turn_task.is_none() && !app.pending_queue.is_empty() {
+            let next = app.pending_queue.remove(0);
+            spawn_turn(agent, app, &next, false);
+        }
+
         if !event::poll(Duration::from_millis(50))? {
             continue;
         }
@@ -332,6 +344,7 @@ async fn run_loop(
                     app.busy = false;
                     app.busy_since = None;
                     app.turn_rx = None;
+                    app.pending_queue.clear();
                     app.add_meta("  ⚡ interrupted (Ctrl+C)");
                     continue;
                 }
@@ -403,7 +416,7 @@ async fn run_loop(
                         handle_command(agent, app, &cmd_line).await;
                         continue;
                     }
-                    spawn_turn(agent, app, &text);
+                    spawn_turn(agent, app, &text, true);
                 }
                 KeyCode::Up => {
                     if app.is_command {
@@ -470,12 +483,17 @@ async fn run_loop(
 
 /// Spawn the agent turn in a background task; stream events via a channel
 /// so the UI stays responsive with a spinner + live token rendering.
-fn spawn_turn(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, text: &str) {
+fn spawn_turn(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, text: &str, echo: bool) {
+    // Always echo the question into the chat immediately so the user sees
+    // it right away — even if the previous turn is still running.
+    if echo {
+        app.add_user(text);
+    }
     if app.busy {
-        app.add_meta("  busy — Ctrl+C to interrupt");
+        app.pending_queue.push(text.to_string());
+        app.add_meta("  ⏳ queued (will run when the current answer finishes)");
         return;
     }
-    app.add_user(text);
     let prompt = text.to_string();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<TurnMsg>();
     app.turn_rx = Some(rx);
@@ -749,19 +767,53 @@ fn draw_header(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_widget(Paragraph::new(header).style(Style::default().bg(Color::Black)), area);
 }
 
-fn draw_chat(f: &mut Frame, area: Rect, app: &App) {
-    let mut items: Vec<ListItem> = Vec::new();
-    let max_visible = area.height as usize;
-    let total = app.log.len();
-    // follow_bottom: always show the newest content (start at bottom).
-    let start = if app.follow_bottom {
-        total.saturating_sub(max_visible)
-    } else {
-        // Manual scroll: `scroll` lines up from the bottom.
-        total.saturating_sub(max_visible + app.scroll).min(total.saturating_sub(max_visible))
-    };
-    let end = total;
+/// Estimated terminal rows an entry consumes after wrapping at `width`.
+fn entry_rows(e: &LogEntry, width: usize) -> usize {
+    let w = width.max(1);
+    let lines = |s: &str| -> usize { s.lines().map(|l| l.chars().count().div_ceil(w).max(1)).sum::<usize>().max(1) };
+    match e {
+        LogEntry::Text { content, .. } => lines(content),
+        LogEntry::Assistant(content) => lines(content),
+        LogEntry::ToolCard { output, ok, .. } => {
+            let mut r = 1;
+            if !output.is_empty() && *ok {
+                r += lines(output);
+            }
+            r
+        }
+        LogEntry::Meta(text) => lines(text),
+    }
+}
 
+fn draw_chat(f: &mut Frame, area: Rect, app: &App) {
+    let max_rows = area.height as usize;
+    let width = area.width as usize;
+    let total = app.log.len();
+    let busy_rows = if app.busy { 1 } else { 0 };
+
+    // Build the visible window from the BOTTOM so the newest content (the
+    // final words of the answer) is always fully on screen. Count *rows*,
+    // not entries — entries wrap, so slicing by entry count clips the tail.
+    let end = if app.follow_bottom {
+        total
+    } else {
+        total.saturating_sub(app.scroll)
+    };
+
+    let mut rows_used = busy_rows;
+    let mut idx = end;
+    while idx > 0 {
+        let i = idx - 1;
+        let rows = entry_rows(&app.log[i], width);
+        if rows_used + rows > max_rows {
+            break;
+        }
+        rows_used += rows;
+        idx = i;
+    }
+    let start = idx;
+
+    let mut items: Vec<ListItem> = Vec::new();
     for i in start..end {
         match &app.log[i] {
             LogEntry::Text { content, style } => {
