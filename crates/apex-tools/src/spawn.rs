@@ -38,7 +38,10 @@ impl Tool for SpawnTool {
 an isolated prompt. Each child gets its own independent iteration budget \
 (config: agent.delegation_max_iterations, default 250). Collects their outputs. \
 Bounded concurrency (max 5). Use for parallel research, independent code \
-generation, or multi-perspective review.".into(),
+generation, or multi-perspective review. For acceptance-gated work: give each \
+child a GATES.md, then call the `gates` tool with action=reverify on every \
+child's ledger after spawn returns (parent re-verification — self-certification \
+is worthless).".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {

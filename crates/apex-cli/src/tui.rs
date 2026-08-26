@@ -44,6 +44,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("route", "route a task to the best model"),
     ("council", "multi-model deliberation vote"),
     ("govern", "constitutional guardrail check"),
+    ("gates", "acceptance ledger: status (default), run, reverify, create"),
     ("subagent", "spawn parallel subagents"),
     ("swarm", "spawn 3-way swarm"),
     ("quit", "exit"),
@@ -738,6 +739,7 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
             app.add_assistant("/route          — route a task to the best model");
             app.add_assistant("/council        — multi-model deliberation vote");
             app.add_assistant("/govern         — constitutional guardrail check");
+            app.add_assistant("/gates          — acceptance ledger (status/run/reverify/create)");
             app.add_assistant("/subagent       — spawn parallel subagents");
             app.add_assistant("/swarm          — spawn 3-way swarm");
             app.add_assistant("/quit           — exit");
@@ -864,6 +866,21 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
         "tools" => {
             let names = agent.lock().await.tools.names();
             app.add_meta(format!("  tools ({}) {}", names.len(), names.join(", ")));
+        }
+        "gates" => {
+            let action = parts.get(1).copied().unwrap_or("status").to_string();
+            let path = parts.get(2).map(|s| s.to_string()).unwrap_or_else(|| "GATES.md".to_string());
+            let g = agent.lock().await;
+            let tool = g.tools.get("gates");
+            drop(g);
+            match tool {
+                Some(tool) => {
+                    let args = serde_json::json!({"action": action, "path": path});
+                    let outcome = tool.execute(args).await;
+                    app.add_tool_card(&outcome.name, outcome.ok, outcome.elapsed_ms, &outcome.output);
+                }
+                None => app.add_error("gates tool not available"),
+            }
         }
         "clear" | "new" => {
             app.clear();
@@ -1287,8 +1304,8 @@ mod tests {
     fn every_palette_command_is_handled() {
         let handled = [
             "help", "model", "models", "provider", "addprovider", "tools",
-            "clear", "save", "usage", "session", "config", "keys", "subagent",
-            "swarm", "route", "council", "govern", "quit",
+            "clear", "save", "usage", "session", "config", "keys", "gates",
+            "subagent", "swarm", "route", "council", "govern", "quit",
         ];
         for (name, _) in COMMANDS {
             assert!(handled.contains(name), "palette command /{name} has no handler");

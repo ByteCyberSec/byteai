@@ -82,6 +82,7 @@ model = "deepseek-v4-flash"
 - [x] Phase 8 — Smart router (capability-based model routing + learning)
 - [x] Phase 9 — Reviewer (independent verification agent)
 - [x] Phase 10 — Polish (TUI, agent hub, plugins, MCP, remote execution)
+- [x] Acceptance gates (`gates` tool — unlazy-style GATES.md ledgers: status/run/reverify/create; completion proven by CHECK+EXPECT evidence, not declaration; parent re-verification via `gates reverify` after `spawn`)
 
 Every phase ends with a benchmark run (`benchmarks/`).
 
