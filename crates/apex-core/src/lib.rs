@@ -83,14 +83,18 @@ impl Default for AgentConfig {
 pub const SYSTEM_PROMPT: &str = r#"You are ByteAi (codename APEX), an autonomous coding agent.
 
 Working style: UNDERSTAND → INVESTIGATE → IMPLEMENT → TEST → VERIFY → REPORT.
-Use tools (shell, read, search, edit, todo, note) whenever they reduce guesswork.
-Read files before editing them. Search before assuming. Run commands to verify.
+Use tools (shell, read, search, edit, websearch, fetch, todo, note, memory) whenever they reduce guesswork.
+Read files before editing them. Search before assuming. Use websearch+fetch for real-time web info. Run commands to verify.
 
 Reporting rules:
 - Final answer structure: 1) What changed  2) Verification  3) Blockers/risks  4) Next action.
 - No preamble, no "Great question!", no repeating the user's request.
 - Never claim success without verification. If you cannot verify, say what remains unverified.
 - Keep responses concise. Use short sections, not giant paragraphs.
+
+Chat mode: when the user's message is short, casual, or conversational (greetings, small talk, casual questions) — respond naturally without calling tools. Only use tools when the user gives a concrete task or asks for information that requires them.
+
+Clarity: if the user's request is vague or underspecified, ask 1-2 brief clarifying questions before acting. Do NOT guess what the user wants.
 "#;
 
 pub struct Agent {
@@ -114,6 +118,50 @@ impl Agent {
         }
     }
 
+    /// Inject relevant prior memories into the system prompt (mem0-style).
+    /// Searches the memory store for entries matching the user's query and
+    /// prepends a "Relevant prior knowledge" block. Silently skips when the
+    /// memory store is unavailable or the query is empty.
+    pub fn inject_memories(&mut self, query: &str) {
+        if query.trim().is_empty() {
+            return;
+        }
+        let mem = match apex_memory::Memory::open(&self.data_dir.join("memory")) {
+            Ok(m) => m,
+            Err(_) => return, // no memory store yet
+        };
+        // Collect meaningful keywords (drop stop words/short tokens), search
+        // each individually so a match on any substantive term recalls the fact.
+        let stop: &[&str] = &["the", "and", "for", "with", "what", "tell", "about", "please", "help", "this", "that", "your", "you", "are", "can", "how", "why", "when", "where", "which", "into"];
+        let mut seen: Vec<apex_memory::Entry> = Vec::new();
+        for word in query.split_whitespace() {
+            let w = word.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+            if w.len() < 4 || stop.contains(&w.as_str()) {
+                continue;
+            }
+            if let Ok(entries) = mem.search(&w, None, 3) {
+                for e in entries {
+                    if !seen.iter().any(|x| x.id == e.id) {
+                        seen.push(e);
+                    }
+                }
+            }
+        }
+        if seen.is_empty() {
+            return;
+        }
+        let mut block = String::from("\n\nRelevant prior knowledge:\n");
+        for e in seen.iter().take(5) {
+            block.push_str(&format!("- {}: {}\n", e.title, e.body));
+        }
+        // Insert the memory block right after the system prompt.
+        if let Some(sys) = self.history.first_mut() {
+            if let Some(ref mut c) = sys.content {
+                c.push_str(&block);
+            }
+        }
+    }
+
     /// One user turn: stream the model, dispatch tool calls, loop until done.
     /// Generic callbacks (instead of `&mut dyn FnMut`) so the future is `Send`
     /// and can run in a background task (used by the TUI).
@@ -128,6 +176,9 @@ impl Agent {
         F2: FnMut(&ToolOutcome) + Send,
     {
         self.with_system_prompt();
+        // mem0-style: recall relevant prior facts into the system prompt
+        // so the agent doesn't start each session from scratch.
+        self.inject_memories(user_input);
         self.history.push(Message::user(user_input));
         self.phase = Phase::Understanding;
 
@@ -248,6 +299,7 @@ impl Agent {
                 self.phase = Phase::Complete;
                 outcome.final_text = content;
                 outcome.finished = true;
+                self.extract_memories(&outcome).await;
                 return Ok(outcome);
             }
 
@@ -364,7 +416,57 @@ impl Agent {
         }
         outcome.exhausted = true;
         outcome.exhausted_reason = Some(reason);
+        // mem0-style: auto-extract durable facts from this conversation turn
+        // and persist them so the agent remembers across sessions.
+        self.extract_memories(&outcome).await;
         Ok(outcome)
+    }
+
+    /// mem0-style auto-memory: extract durable facts from the just-completed
+    /// turn and persist them to the memory store. Best-effort (silent on
+    /// failure). The model is asked to extract 1-3 short factual statements
+    /// (preferences, decisions, entity info) that should be remembered across
+    /// sessions.
+    async fn extract_memories(&mut self, outcome: &AgentOutcome) {
+        // Only extract from successful turns with meaningful content.
+        if !outcome.finished || outcome.final_text.is_empty() {
+            return;
+        }
+        // Find the last user message (the one that triggered this turn).
+        let last_user = self.history.iter().rev().find(|m| m.role == Role::User);
+        let Some(user) = last_user else { return };
+        let Some(user_text) = &user.content else { return };
+        if user_text.trim().is_empty() {
+            return;
+        }
+        // Use the provider to extract facts (small prompt, cheap model call).
+        let prompt = format!(
+            "Extract 1-3 concise, factual statements from this conversation exchange. \
+             Focus on durable facts: user preferences, decisions made, project structure, \
+             file paths, configuration values, or requirements. Each statement must be \
+             self-contained and verifiable. Omit transient information.\n\n\
+             User: {user_text}\n\n\
+             Assistant: {}",
+            outcome.final_text
+        );
+        let msg = Message::user(&prompt);
+        let (text, _) = match self.provider.chat(&self.config.model, &[msg], &[], Some(256)).await {
+            Ok((t, _, _)) if !t.trim().is_empty() => (t.trim().to_string(), true),
+            _ => return,
+        };
+        // Save each line as a memory entity.
+        let mut mem = match apex_memory::Memory::open(&self.data_dir.join("memory")) {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+        for line in text.lines() {
+            let line = line.trim().trim_start_matches(|c| c == '-' || c == '*' || c == ' ').trim();
+            if line.is_empty() {
+                continue;
+            }
+            let title = line.chars().take(60).collect::<String>();
+            let _ = mem.upsert(apex_memory::Kind::Entity, &title, line, &[String::from("auto")], None);
+        }
     }
 
     /// Minimal budget enforcement: when the estimated history exceeds the
@@ -421,5 +523,67 @@ pub fn classify(e: &anyhow::Error) -> &'static str {
         "REQUEST"
     } else {
         "UNKNOWN"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apex_memory::Kind;
+    use apex_provider::Client;
+    use apex_tools::Registry;
+
+    fn tmp_dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("byteai_core_test_{}_{}", std::process::id(), name));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn make_agent(data_dir: &std::path::Path) -> Agent {
+        let client = Client::new("http://127.0.0.1:1/v1", "test").unwrap();
+        let tools = Registry::builtins(&apex_tools::ToolContext::new(data_dir.to_path_buf()));
+        let cfg = AgentConfig::default();
+        Agent::new(client, cfg, tools, data_dir.to_path_buf())
+    }
+
+    #[test]
+    fn inject_memories_prepends_relevant_block() {
+        let dir = tmp_dir("inject");
+        // Seed one memory entity about "rust async".
+        let mut mem = apex_memory::Memory::open(&dir.join("memory")).unwrap();
+        mem.upsert(Kind::Entity, "rust async", "user prefers async rust", &[].to_vec(), None).unwrap();
+        drop(mem);
+
+        let mut agent = make_agent(&dir);
+        agent.with_system_prompt();
+        agent.inject_memories("tell me about async rust");
+
+        let sys = agent.history[0].content.clone().unwrap_or_default();
+        assert!(sys.contains("Relevant prior knowledge"));
+        assert!(sys.contains("user prefers async rust"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inject_memories_skips_empty_query() {
+        let dir = tmp_dir("inject_empty");
+        let mut agent = make_agent(&dir);
+        agent.with_system_prompt();
+        agent.inject_memories("  ");
+        let sys = agent.history[0].content.clone().unwrap_or_default();
+        assert!(!sys.contains("Relevant prior knowledge"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inject_memories_silent_when_store_missing() {
+        let dir = tmp_dir("inject_missing");
+        let mut agent = make_agent(&dir); // no memory dir created
+        agent.with_system_prompt();
+        agent.inject_memories("some query here");
+        let sys = agent.history[0].content.clone().unwrap_or_default();
+        assert!(!sys.contains("Relevant prior knowledge"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -139,6 +139,7 @@ name = "apex-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "apex-memory",
  "apex-provider",
  "apex-tools",
  "apex-types",

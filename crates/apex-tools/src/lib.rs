@@ -17,6 +17,7 @@ mod spawn;
 mod review;
 mod plugin;
 mod fetch;
+mod websearch;
 mod graph;
 mod plan;
 mod route;
@@ -138,6 +139,7 @@ impl Registry {
         r.register(Arc::new(review::ReviewTool::new(ctx.lsp.clone())));
         r.register(Arc::new(plugin::PluginTool::new(ctx.data_dir.clone())));
         r.register(Arc::new(fetch::FetchTool));
+        r.register(Arc::new(websearch::WebSearchTool));
         r.register(Arc::new(graph::GraphTool));
         r.register(Arc::new(plan::PlanTool::new(ctx.data_dir.clone())));
         r.register(Arc::new(route::RouteTool::new(ctx.clone())));
