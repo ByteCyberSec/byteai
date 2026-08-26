@@ -152,9 +152,28 @@ impl App {
         self.follow_bottom = true;
     }
 
+    /// Append one assistant output LINE — always a fresh entry, never
+    /// coalesced. Used for multi-line command output (/help, /keys) so each
+    /// line sits on its own row like jcode.
     fn add_assistant(&mut self, text: &str) {
-        // Coalesce streamed chunks: append to the last Assistant line instead
-        // of creating one entry per token chunk. Newlines start new lines.
+        for line in text.split('\n') {
+            if line.is_empty() {
+                continue;
+            }
+            self.log.push(LogEntry::Assistant(line.to_string()));
+        }
+        if self.follow_bottom {
+            self.scroll = 0;
+        }
+        while self.log.len() > MAX_LOG {
+            self.log.remove(0);
+        }
+    }
+
+    /// Streamed assistant token chunks: coalesce onto the current Assistant
+    /// line so tokens don't wrap onto separate rows (jcode-style). Newlines
+    /// inside a chunk start a new line.
+    fn add_stream(&mut self, text: &str) {
         let mut first = true;
         for line in text.split('\n') {
             if first {
@@ -241,7 +260,7 @@ impl App {
         };
         loop {
             match rx.try_recv() {
-                Ok(TurnMsg::Text(t)) => self.add_assistant(&t),
+                Ok(TurnMsg::Text(t)) => self.add_stream(&t),
                 Ok(TurnMsg::Tool(o)) => self.add_tool_card(&o.name, o.ok, o.elapsed_ms, &o.output),
                 Ok(TurnMsg::Done(outcome)) => {
                     self.add_done(outcome.iterations, outcome.tool_calls_made, outcome.usage.total_tokens);
