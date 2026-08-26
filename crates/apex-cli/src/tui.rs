@@ -30,9 +30,10 @@ const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧
 /// that appears when the user types `/`.
 const COMMANDS: &[(&str, &str)] = &[
     ("help", "show commands"),
-    ("model", "show or switch model (e.g. /model name)"),
+    ("model", "show / switch model (e.g. /model name)"),
     ("models", "list models on provider"),
-    ("provider", "show current provider"),
+    ("provider", "list / switch provider (e.g. /provider name)"),
+    ("addprovider", "add a new provider+model (e.g. /addprovider name url model key)"),
     ("tools", "list available tools"),
     ("clear", "clear conversation"),
     ("save", "save session to disk"),
@@ -40,11 +41,11 @@ const COMMANDS: &[(&str, &str)] = &[
     ("session", "list saved sessions"),
     ("config", "show config path"),
     ("keys", "show keybindings"),
-    ("subagent", "spawn parallel subagents"),
-    ("swarm", "spawn 3-way swarm"),
     ("route", "route a task to the best model"),
     ("council", "multi-model deliberation vote"),
     ("govern", "constitutional guardrail check"),
+    ("subagent", "spawn parallel subagents"),
+    ("swarm", "spawn 3-way swarm"),
     ("quit", "exit"),
 ];
 
@@ -477,9 +478,11 @@ async fn run_loop(
                     }
                 }
                 KeyCode::Char(c) => {
-                    // Never allow a second leading slash: typing '/' while
-                    // already in command mode is ignored, so "/" stays "/".
-                    if c == '/' && app.input.starts_with('/') {
+                    // Only ONE leading slash: typing '/' when the input is
+                    // exactly "/" is ignored so "/" never becomes "//".
+                    // Slashes later in the line (URLs, /path args) pass
+                    // through untouched.
+                    if c == '/' && app.input == "/" {
                         continue;
                     }
                     app.input.push(c);
@@ -552,9 +555,10 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
     match *cmd {
         "help" | "h" | "?" | "commands" => {
             app.add_assistant("/help           — this message");
-            app.add_assistant("/model <name>   — show or switch model");
+            app.add_assistant("/model <name>   — show / switch / persist model");
             app.add_assistant("/models         — list models on provider");
-            app.add_assistant("/provider       — show current provider");
+            app.add_assistant("/provider       — list / switch / persist provider");
+            app.add_assistant("/addprovider    — add provider+model (e.g. /addprovider name url model)");
             app.add_assistant("/tools          — list available tools");
             app.add_assistant("/clear          — clear conversation");
             app.add_assistant("/save <name>    — save session to disk");
@@ -571,11 +575,30 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
         }
         "model" => {
             if let Some(m) = parts.get(1) {
-                agent.lock().await.config.model = m.to_string();
-                app.model = m.to_string();
+                let m = m.to_string();
+                // Persist so the choice survives restart (agent + provider).
+                let mut cfg = crate::config::load().unwrap_or_default();
+                if let Err(e) = crate::config::set_model(&mut cfg, &app.provider, &m) {
+                    app.add_error(&format!("  could not persist model: {e:#}"));
+                }
+                agent.lock().await.config.model = m.clone();
+                app.model = m.clone();
                 app.add_meta(format!("  model -> {m}"));
             } else {
                 app.add_meta(format!("  model = {}", agent.lock().await.config.model));
+                // Show models available on the current provider (best-effort).
+                match agent.lock().await.provider.list_models().await {
+                    Ok(ids) => {
+                        app.models = ids.clone();
+                        app.add_meta(format!(
+                            "  {} models on {}: {}",
+                            ids.len(),
+                            app.provider,
+                            ids.join(", ")
+                        ));
+                    }
+                    Err(_) => app.add_meta("  (provider model list offline)"),
+                }
             }
         }
         "models" => {
@@ -588,7 +611,86 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
             }
         }
         "provider" => {
-            app.add_meta(format!("  provider = {}", app.provider));
+            let cfg = crate::config::load().unwrap_or_default();
+            match parts.get(1).copied() {
+                None => {
+                    app.add_meta(format!("  provider = {}", app.provider));
+                    app.add_meta("  configured providers:");
+                    for p in &cfg.providers {
+                        let cur = if p.name == app.provider { " ▸" } else { "  " };
+                        let key = if p.resolved_key().is_empty() { " (no key)" } else { "" };
+                        app.add_meta(format!("  {cur} {}{key}", p.name));
+                    }
+                    app.add_meta("  switch: /provider <name> · add: /addprovider <name> <url> <model> [key]");
+                }
+                Some(name) => {
+                    // Switch provider at runtime: rebuild the client and model.
+                    let provider = crate::config::resolve_provider(&cfg, Some(name), None, None);
+                    if provider.name != name {
+                        app.add_error(&format!("  provider '{name}' not found — see /provider"));
+                        return;
+                    }
+                    match apex_provider::Client::new(provider.base_url.clone(), provider.resolved_key()) {
+                        Ok(client) => {
+                            // Persist as default provider.
+                            let mut cfg2 = crate::config::load().unwrap_or_default();
+                            let _ = crate::config::set_default_provider(&mut cfg2, name);
+                            let model = crate::config::resolve_model(&cfg, None, &provider);
+                            {
+                                let mut g = agent.lock().await;
+                                g.provider = client;
+                                g.config.model = model.clone();
+                            }
+                            app.provider = name.to_string();
+                            app.model = model.clone();
+                            // Refresh the model list for the new provider.
+                            if let Ok(ids) = agent.lock().await.provider.list_models().await {
+                                app.models = ids;
+                            }
+                            app.add_meta(format!("  provider -> {name}, model -> {model}"));
+                        }
+                        Err(e) => app.add_error(&format!("  provider {name}: {e:#}")),
+                    }
+                }
+            }
+        }
+        "addprovider" | "provider-add" => {
+            let name = parts.get(1).copied().unwrap_or("");
+            let url = parts.get(2).copied().unwrap_or("");
+            let model = parts.get(3).copied().unwrap_or("");
+            let key = parts.get(4).copied().unwrap_or("");
+            if name.is_empty() || url.is_empty() {
+                app.add_error("usage: /addprovider <name> <base_url> <model> [api_key]");
+                app.add_error("       key can be a literal or an env var name prefixed with env: (e.g. env:MY_KEY)");
+                return;
+            }
+            let (key_val, env_val) = if let Some(env) = key.strip_prefix("env:") {
+                ("".to_string(), env.to_string())
+            } else {
+                (key.to_string(), String::new())
+            };
+            let mut cfg = crate::config::load().unwrap_or_default();
+            match crate::config::add_provider(&mut cfg, name, url, &key_val, &env_val, model) {
+                Ok(()) => {
+                    app.add_meta(format!("  added provider '{name}' ({url}, model {model})"));
+                    // Switch to it immediately.
+                    match apex_provider::Client::new(url.to_string(), key_val) {
+                        Ok(client) => {
+                            let m = if model.is_empty() { app.model.clone() } else { model.to_string() };
+                            {
+                                let mut g = agent.lock().await;
+                                g.provider = client;
+                                g.config.model = m.clone();
+                            }
+                            app.provider = name.to_string();
+                            app.model = m.clone();
+                            app.add_meta(format!("  now on provider -> {name}, model -> {m}"));
+                        }
+                        Err(e) => app.add_error(&format!("  connected but client failed: {e:#}")),
+                    }
+                }
+                Err(e) => app.add_error(&format!("  {e:#}")),
+            }
         }
         "tools" => {
             let names = agent.lock().await.tools.names();
@@ -992,9 +1094,9 @@ mod tests {
     #[test]
     fn every_palette_command_is_handled() {
         let handled = [
-            "help", "model", "models", "provider", "tools", "clear", "save",
-            "usage", "session", "config", "keys", "subagent", "swarm",
-            "route", "council", "govern", "quit",
+            "help", "model", "models", "provider", "addprovider", "tools",
+            "clear", "save", "usage", "session", "config", "keys", "subagent",
+            "swarm", "route", "council", "govern", "quit",
         ];
         for (name, _) in COMMANDS {
             assert!(handled.contains(name), "palette command /{name} has no handler");

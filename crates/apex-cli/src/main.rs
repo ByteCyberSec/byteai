@@ -430,27 +430,67 @@ async fn repl(agent: &mut Agent) -> Result<()> {
                 "model" => {
                     if let Some(m) = cmd.split_whitespace().nth(1) {
                         agent.config.model = m.to_string();
+                        // Persist so the choice survives restart.
+                        let mut cfg = config::load().unwrap_or_default();
+                        let prov = cfg.agent.default_provider.clone();
+                        let _ = config::set_model(&mut cfg, &prov, m);
                         println!("[model -> {m}]");
                     } else {
                         println!("[model = {}]", agent.config.model);
                     }
                 }
                 "provider" => {
-                    if let Some(p) = cmd.split_whitespace().nth(1) {
-                        // Re-resolve provider from config.
-                        let cfg = config::load().unwrap_or_default();
-                        let provider = config::resolve_provider(&cfg, Some(p), None, None);
-                        agent.provider = match apex_provider::Client::new(provider.base_url.clone(), provider.resolved_key()) {
-                            Ok(c) => c,
-                            Err(e) => {
-                                println!("[provider {p}: failed: {e:#}]");
+                    let cfg = config::load().unwrap_or_default();
+                    match cmd.split_whitespace().nth(1) {
+                        Some("add") => {
+                            // /provider add <name> <base_url> <model> [key|env:KEY]
+                            let parts: Vec<&str> = cmd.split_whitespace().collect();
+                            if parts.len() < 4 {
+                                println!("[usage: /provider add <name> <base_url> <model> [key|env:KEY]]");
                                 continue;
                             }
-                        };
-                        agent.config.model = provider.model.clone();
-                        println!("[provider -> {p}, model -> {}]", provider.model);
-                    } else {
-                        println!("[provider not shown — use /provider <name>]");
+                            let (name, url, model) = (parts[2], parts[3], parts.get(4).copied().unwrap_or(""));
+                            let key = parts.get(5).copied().unwrap_or("");
+                            let (key_val, env_val) = match key.strip_prefix("env:") {
+                                Some(env) => ("".to_string(), env.to_string()),
+                                None => (key.to_string(), String::new()),
+                            };
+                            let mut cfg = config::load().unwrap_or_default();
+                            match config::add_provider(&mut cfg, name, url, &key_val, &env_val, model) {
+                                Ok(()) => println!("[added provider {name} ({url}, model {model}); now default]"),
+                                Err(e) => println!("[add provider failed: {e:#}]"),
+                            }
+                        }
+                        Some(p) => {
+                            // Switch provider at runtime.
+                            let provider = config::resolve_provider(&cfg, Some(p), None, None);
+                            if provider.name != p {
+                                println!("[provider {p} not found — see /provider]");
+                                continue;
+                            }
+                            agent.provider = match apex_provider::Client::new(provider.base_url.clone(), provider.resolved_key()) {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    println!("[provider {p}: failed: {e:#}]");
+                                    continue;
+                                }
+                            };
+                            let model = config::resolve_model(&cfg, None, &provider);
+                            agent.config.model = model.clone();
+                            let mut cfg2 = config::load().unwrap_or_default();
+                            let _ = config::set_default_provider(&mut cfg2, p);
+                            println!("[provider -> {p}, model -> {model}]");
+                        }
+                        None => {
+                            println!("[provider = {}]", cfg.agent.default_provider);
+                            println!("[configured providers:]");
+                            for prov in &cfg.providers {
+                                let cur = if prov.name == cfg.agent.default_provider { " ▸" } else { "  " };
+                                let key = if prov.resolved_key().is_empty() { " (no key)" } else { "" };
+                                println!("  {cur} {}{key}", prov.name);
+                            }
+                            println!("[switch: /provider <name> · add: /provider add <name> <url> <model> [key]]");
+                        }
                     }
                 }
                 "tools" => {

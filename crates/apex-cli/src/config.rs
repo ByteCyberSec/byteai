@@ -159,3 +159,160 @@ pub fn resolve_model(cfg: &Config, cli_model: Option<&str>, provider: &ProviderE
         .or_else(|| if provider.model.is_empty() { None } else { Some(provider.model.clone()) })
         .unwrap_or_else(|| "deepseek-v4-flash".into())
 }
+
+/// Write the config back to config.toml (creating the dir/file if needed).
+/// Preserves every existing field, including inline API keys — the whole
+/// struct is round-tripped, so nothing configured is lost.
+pub fn save(cfg: &Config) -> Result<()> {
+    let dir = config_dir();
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("config.toml");
+    let text = toml::to_string_pretty(cfg).context("serialize config")?;
+    std::fs::write(&path, text).with_context(|| format!("write {}", path.display()))
+}
+
+/// Persist a model switch: updates [agent] model AND the active provider's
+/// model so the choice survives restart and stays matched on provider switch.
+pub fn set_model(cfg: &mut Config, provider_name: &str, model: &str) -> Result<()> {
+    cfg.agent.model = model.to_string();
+    if let Some(p) = cfg.providers.iter_mut().find(|p| p.name == provider_name) {
+        p.model = model.to_string();
+    }
+    save(cfg)
+}
+
+/// Persist a default-provider switch.
+pub fn set_default_provider(cfg: &mut Config, provider_name: &str) -> Result<()> {
+    cfg.agent.default_provider = provider_name.to_string();
+    save(cfg)
+}
+
+/// Add a brand-new provider (+ optional default model) to the config and
+/// make it the default provider. Returns an error if the name already exists.
+/// `api_key` and `api_key_env` are mutually exclusive — the non-empty one
+/// wins; if both empty, the entry stores no key (env override still works).
+pub fn add_provider(
+    cfg: &mut Config,
+    name: &str,
+    base_url: &str,
+    api_key: &str,
+    api_key_env: &str,
+    model: &str,
+) -> Result<()> {
+    if cfg.providers.iter().any(|p| p.name == name) {
+        anyhow::bail!("provider '{name}' already exists — pick another name or edit config.toml");
+    }
+    let (key, env) = if !api_key.is_empty() {
+        (api_key.to_string(), String::new())
+    } else {
+        (String::new(), api_key_env.to_string())
+    };
+    cfg.providers.push(ProviderEntry {
+        name: name.to_string(),
+        base_url: base_url.to_string(),
+        api_key: key,
+        api_key_env: env,
+        model: model.to_string(),
+    });
+    cfg.agent.default_provider = name.to_string();
+    if !model.is_empty() {
+        cfg.agent.model = model.to_string();
+    }
+    save(cfg)
+}
+
+/// Names of every provider in the config (for the palette / provider list).
+pub fn provider_names(cfg: &Config) -> Vec<String> {
+    cfg.providers.iter().map(|p| p.name.clone()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::OnceLock;
+
+    /// Tests mutate the process-global BYTEAI_CONFIG_DIR env var, so they
+    /// must run one at a time (parallel threads would race on `load()`).
+    static CFG_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+    fn lock() -> std::sync::MutexGuard<'static, ()> {
+        CFG_LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap()
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("byteai-config-test-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn save_roundtrips_all_fields_including_key() {
+        let _g = lock();
+        let dir = temp_dir("roundtrip");
+        unsafe { std::env::set_var("BYTEAI_CONFIG_DIR", &dir) };
+        let mut cfg = Config::default();
+        cfg.agent.model = "m1".into();
+        cfg.providers[0].api_key = "key-value-abc-123".into(); // must survive round-trip
+        save(&cfg).unwrap();
+        let back = load().unwrap();
+        assert_eq!(back.agent.model, "m1");
+        assert_eq!(back.providers[0].api_key, "key-value-abc-123");
+        assert_eq!(back.providers.len(), 2);
+    }
+
+    #[test]
+    fn set_model_persists_agent_and_provider() {
+        let _g = lock();
+        let dir = temp_dir("setmodel");
+        unsafe { std::env::set_var("BYTEAI_CONFIG_DIR", &dir) };
+        let mut cfg = Config::default();
+        set_model(&mut cfg, "bai", "gpt-x").unwrap();
+        let back = load().unwrap();
+        assert_eq!(back.agent.model, "gpt-x");
+        assert_eq!(back.providers.iter().find(|p| p.name == "bai").unwrap().model, "gpt-x");
+        assert_eq!(back.providers.iter().find(|p| p.name == "omniroute").unwrap().model, "");
+    }
+
+    #[test]
+    fn add_provider_appends_and_becomes_default() {
+        let _g = lock();
+        let dir = temp_dir("addprov");
+        unsafe { std::env::set_var("BYTEAI_CONFIG_DIR", &dir) };
+        let mut cfg = Config::default();
+        add_provider(&mut cfg, "groq", "https://api.groq.com/v1", "", "GROQ_KEY", "llama-3").unwrap();
+        let back = load().unwrap();
+        assert_eq!(back.providers.len(), 3);
+        let groq = back.providers.iter().find(|p| p.name == "groq").unwrap();
+        assert_eq!(groq.base_url, "https://api.groq.com/v1");
+        assert_eq!(groq.api_key_env, "GROQ_KEY");
+        assert_eq!(groq.model, "llama-3");
+        assert_eq!(back.agent.default_provider, "groq");
+        assert_eq!(back.agent.model, "llama-3");
+    }
+
+    #[test]
+    fn add_provider_rejects_duplicate_and_accepts_literal_key() {
+        let _g = lock();
+        let dir = temp_dir("dup");
+        unsafe { std::env::set_var("BYTEAI_CONFIG_DIR", &dir) };
+        let mut cfg = Config::default();
+        add_provider(&mut cfg, "dup", "http://x/v1", "lit-key-xyz", "", "m").unwrap();
+        let err = add_provider(&mut cfg, "dup", "http://x/v1", "", "", "m2").unwrap_err();
+        assert!(err.to_string().contains("already exists"));
+        let back = load().unwrap();
+        let dup = back.providers.iter().find(|p| p.name == "dup").unwrap();
+        assert_eq!(dup.api_key, "lit-key-xyz"); // literal key stored, not env
+        assert_eq!(dup.api_key_env, "");
+        assert_eq!(back.agent.model, "m"); // duplicate didn't clobber model
+    }
+
+    #[test]
+    fn set_default_provider_persists() {
+        let _g = lock();
+        let dir = temp_dir("defprov");
+        unsafe { std::env::set_var("BYTEAI_CONFIG_DIR", &dir) };
+        let mut cfg = Config::default();
+        set_default_provider(&mut cfg, "bai").unwrap();
+        assert_eq!(load().unwrap().agent.default_provider, "bai");
+    }
+}
