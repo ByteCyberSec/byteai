@@ -30,16 +30,27 @@ const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧
 /// that appears when the user types `/`.
 const COMMANDS: &[(&str, &str)] = &[
     ("help", "this message"),
+    ("status", "session: model, provider, tokens, context"),
+    ("new", "start a fresh session"),
+    ("retry", "resend the last message"),
+    ("undo", "back up a turn: /undo [N]"),
+    ("compress", "summarize + compact the context"),
+    ("title", "name/save the session: /title [name]"),
     ("model", "switch model — scroll-pick or /model <name>"),
     ("provider", "switch provider — scroll-pick or /provider <name>"),
     ("addprovider", "add provider+model: /addprovider name url model [key]"),
+    ("reload", "reload config.toml into the session"),
     ("tools", "list available tools"),
     ("clear", "clear conversation"),
     ("save", "save session: /save [name]"),
-    ("usage", "show token usage"),
+    ("usage", "show token usage (/usage reset)"),
     ("session", "resume a saved session — scroll-pick"),
+    ("resume", "resume by name: /resume <id>"),
     ("config", "show config path"),
     ("keys", "show keybindings"),
+    ("version", "show version"),
+    ("copy", "copy last response to clipboard"),
+    ("diff", "git working-tree summary"),
     ("route", "route a task to the best model"),
     ("council", "multi-model deliberation vote"),
     ("govern", "constitutional guardrail check"),
@@ -817,33 +828,7 @@ async fn run_pick(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, pick: P
         }
         PickAction::ResumeSession => {
             let id = pick.values[idx].clone();
-            match crate::session::load(&id) {
-                Ok(sf) => {
-                    let msgs = sf.messages.clone();
-                    let model = sf.model.clone();
-                    {
-                        let mut g = agent.lock().await;
-                        g.history = msgs.clone();
-                        g.config.model = model.clone();
-                    }
-                    app.model = model;
-                    app.clear();
-                    for m in msgs.iter().take(400) {
-                        match m.role {
-                            apex_types::Role::User => {
-                                app.add_user(m.content.as_deref().unwrap_or(""));
-                            }
-                            _ => {
-                                if let Some(c) = &m.content {
-                                    app.add_assistant(c);
-                                }
-                            }
-                        }
-                    }
-                    app.add_meta(format!("  resumed session {id} ({} msgs)", msgs.len()));
-                }
-                Err(e) => app.add_error(&format!("  could not load session: {e:#}")),
-            }
+            resume_session(agent, app, &id).await;
         }
         PickAction::GatesStatus => {
             let path = pick.values[idx].clone();
@@ -895,6 +880,144 @@ fn find_gate_files(root: &str) -> Vec<String> {
         }
     }
     found
+}
+
+/// Rebuild the visible transcript from a message history (user + assistant
+/// lines only; tool internals are not replayed as cards). Used by
+/// /retry, /undo, /compress, /resume and the session picker.
+fn rebuild_log_from_history(app: &mut App, history: &[apex_types::Message]) {
+    app.log.clear();
+    app.push_banner();
+    for m in history {
+        match m.role {
+            apex_types::Role::User => {
+                app.add_user(m.content.as_deref().unwrap_or(""));
+            }
+            _ => {
+                if let Some(c) = &m.content {
+                    app.add_assistant(c);
+                }
+            }
+        }
+    }
+    app.scroll = 0;
+    app.follow_bottom = true;
+}
+
+/// Resume a named session: replace agent history, rebuild the transcript,
+/// restore the model. Shared by the /session picker and /resume <name>.
+async fn resume_session(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, id: &str) {
+    match crate::session::load(id) {
+        Ok(sf) => {
+            let msgs = sf.messages.clone();
+            let model = sf.model.clone();
+            {
+                let mut g = agent.lock().await;
+                g.history = msgs.clone();
+                g.config.model = model.clone();
+            }
+            app.model = model;
+            rebuild_log_from_history(app, &msgs);
+            app.add_meta(format!("  resumed session {id} ({} msgs)", msgs.len()));
+        }
+        Err(e) => app.add_error(&format!("  could not load session: {e:#}")),
+    }
+}
+
+/// Copy text to the system clipboard (macOS pbcopy, Linux xclip/wl-copy).
+/// Returns a short confirmation or an error string.
+fn clipboard_copy(text: &str) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    let cmd = ("pbcopy", Vec::<String>::new());
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let cmd = {
+        let mut args = Vec::new();
+        let bin = if std::path::Path::new("/usr/bin/xclip").exists() || std::path::Path::new("/usr/bin/xclip").exists() {
+            args.push("-selection".to_string());
+            args.push("clipboard".to_string());
+            "xclip"
+        } else if std::path::Path::new("/usr/bin/wl-copy").exists() || std::path::Path::new("/usr/bin/wl-copy").exists() {
+            "wl-copy"
+        } else {
+            args.push("-selection".to_string());
+            args.push("clipboard".to_string());
+            "xclip"
+        };
+        (bin, args)
+    };
+    #[cfg(not(unix))]
+    let cmd = ("", Vec::<String>::new());
+
+    if cmd.0.is_empty() {
+        return Err("no clipboard tool (needs pbcopy / xclip / wl-copy)".into());
+    }
+    let mut c = std::process::Command::new(cmd.0);
+    c.args(&cmd.1);
+    c.stdin(std::process::Stdio::piped());
+    c.stdout(std::process::Stdio::null());
+    c.stderr(std::process::Stdio::null());
+    let mut child = c.spawn().map_err(|e| format!("{e:#}"))?;
+    {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().ok_or("no stdin")?;
+        stdin.write_all(text.as_bytes()).map_err(|e| format!("{e:#}"))?;
+        stdin.flush().ok();
+    }
+    child.wait().map_err(|e| format!("{e:#}"))?;
+    Ok(format!("{} chars copied", text.chars().count()))
+}
+
+/// Git working-tree summary for /diff: `git status --short` + `git diff --stat`.
+/// Fast and read-only. Returns lines or an error.
+fn git_diff_summary() -> Result<Vec<String>, String> {
+    let run = |args: &[&str]| -> Result<String, String> {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .output()
+            .map_err(|e| format!("git: {e:#}"))?;
+        if !out.status.success() {
+            return Err(format!("git {}: non-zero exit", args.join(" ")));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    };
+    let mut lines = Vec::new();
+    let status = run(&["status", "--short"]).map_err(|_| "not a git repository (or git missing)".to_string())?;
+    for l in status.lines().take(30) {
+        lines.push(l.to_string());
+    }
+    if lines.is_empty() {
+        lines.push("(clean working tree)".to_string());
+    }
+    let stat = run(&["diff", "--stat"]);
+    if let Ok(s) = stat {
+        for l in s.lines() {
+            lines.push(l.to_string());
+        }
+    }
+    Ok(lines)
+}
+
+
+/// Open the session-resume picker (shared by /session and /resume).
+fn open_session_picker(app: &mut App) {
+    match crate::session::list() {
+        Ok(list) if list.is_empty() => app.add_meta("  no saved sessions — type /save to save"),
+        Ok(list) => {
+            let items: Vec<String> = list.iter().map(|s| {
+                let msgs = s.messages.len();
+                let last = s.messages.last().and_then(|m| m.content.clone()).unwrap_or_default();
+                let preview: String = last.chars().take(40).collect();
+                format!("{} · {msgs} msgs · {preview}", s.id)
+            }).collect();
+            let values: Vec<String> = list.iter().map(|s| s.id.clone()).collect();
+            app.picker = Some(Picker {
+                title: "sessions — scroll, Enter resumes".into(),
+                items, values, sel: 0,
+                action: PickAction::ResumeSession,
+            });
+        }
+        Err(e) => app.add_error(&format!("session list failed: {e:#}")),
+    }
 }
 
 /// Spawn the agent turn in a background task; stream events via a channel
@@ -950,18 +1073,27 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
         "help" | "h" | "?" | "commands" => {
             app.add_assistant("┌─ General");
             app.add_assistant("/help           — this message");
+            app.add_assistant("/status         — session info (model, tokens, context)");
+            app.add_assistant("/version        — show version");
             app.add_assistant("/keys           — show keybindings");
             app.add_assistant("/tools          — list available tools");
             app.add_assistant("/config         — show config path");
-            app.add_assistant("/usage          — show token usage");
+            app.add_assistant("/usage [reset]  — token usage, or zero the counters");
             app.add_assistant("/clear          — clear conversation");
+            app.add_assistant("┌─ Session");
+            app.add_assistant("/new            — start a fresh session");
+            app.add_assistant("/retry          — resend the last message");
+            app.add_assistant("/undo [N]       — back up N turns and re-run");
+            app.add_assistant("/compress       — summarize + compact the context");
+            app.add_assistant("/title [name]   — name/save the session");
+            app.add_assistant("/save [name]    — save session to disk");
+            app.add_assistant("/session        — scroll-pick a saved session to resume");
+            app.add_assistant("/resume <id>    — resume a session by name");
             app.add_assistant("┌─ Model & Provider");
             app.add_assistant("/model <name>   — set + persist model (no arg: scroll-pick)");
             app.add_assistant("/provider       — scroll-pick a provider as default");
             app.add_assistant("/addprovider    — add provider+model (e.g. /addprovider name url model)");
-            app.add_assistant("┌─ Sessions");
-            app.add_assistant("/save <name>    — save session to disk");
-            app.add_assistant("/session        — scroll-pick a saved session to resume");
+            app.add_assistant("/reload         — reload config.toml into the session");
             app.add_assistant("┌─ Agent Tools");
             app.add_assistant("/route          — route a task to the best model (asks for it)");
             app.add_assistant("/council        — multi-model deliberation vote (asks for it)");
@@ -970,6 +1102,8 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
             app.add_assistant("/subagent       — spawn parallel subagents (asks for the goal)");
             app.add_assistant("/swarm          — spawn 3-way swarm (asks for the goal)");
             app.add_assistant("┌─ Other");
+            app.add_assistant("/copy           — copy last response to clipboard");
+            app.add_assistant("/diff           — git working-tree summary");
             app.add_assistant("/quit           — exit");
             app.add_assistant("");
             app.add_assistant("  pickers: ↑↓ scroll · Enter select · Esc cancel");
@@ -1134,13 +1268,35 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                 }
             }
         }
-        "clear" | "new" => {
+        "clear" => {
             app.clear();
         }
-        "save" => {
-            let name = parts.get(1).map(|s| s.to_string()).unwrap_or_else(|| {
-                format!("tui-{}", crate::session::new_id().get(..8).unwrap_or("sess"))
-            });
+        "save" | "title" => {
+            // Hermes /title: name the current session. Name defaults to a
+            // digest of the last user message.
+            let name = if let Some(n) = parts.get(1) {
+                n.to_string()
+            } else {
+                let g = agent.lock().await;
+                let last_user = g
+                    .history
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == apex_types::Role::User)
+                    .and_then(|m| m.content.clone())
+                    .unwrap_or_default();
+                drop(g);
+                let slug: String = last_user
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .take(24)
+                    .collect();
+                if slug.is_empty() {
+                    format!("tui-{}", crate::session::new_id().get(..8).unwrap_or("sess"))
+                } else {
+                    slug
+                }
+            };
             let g = agent.lock().await;
             let mut sf = crate::session::from_agent(&g.config.model, &app.provider, g.history.clone(), g.usage.clone());
             sf.id = name.clone();
@@ -1151,27 +1307,237 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
             }
         }
         "session" | "sessions" => {
-            match crate::session::list() {
-                Ok(list) if list.is_empty() => app.add_meta("  no saved sessions — type /save to save"),
-                Ok(list) => {
-                    let items: Vec<String> = list.iter().map(|s| {
-                        let msgs = s.messages.len();
-                        let last = s.messages.last().and_then(|m| m.content.clone()).unwrap_or_default();
-                        let preview: String = last.chars().take(40).collect();
-                        format!("{} · {msgs} msgs · {preview}", s.id)
-                    }).collect();
-                    let values: Vec<String> = list.iter().map(|s| s.id.clone()).collect();
-                    app.picker = Some(Picker {
-                        title: "sessions — scroll, Enter resumes".into(),
-                        items, values, sel: 0,
-                        action: PickAction::ResumeSession,
-                    });
+            open_session_picker(app);
+        }
+        "resume" => {
+            match parts.get(1).copied() {
+                Some(id) => resume_session(agent, app, id).await,
+                None => open_session_picker(app),
+            }
+        }
+        "new" => {
+            // Hermes /new: fresh session.
+            let msgs = agent.lock().await.history.len();
+            app.clear();
+            app.add_meta(format!("  new session ({} messages discarded)", msgs));
+        }
+        "retry" | "undo" => {
+            // Hermes /retry: resend last user message.
+            // Hermes /undo [N]: back up N user turns and re-prompt.
+            let n = if *cmd == "undo" {
+                parts.get(1).and_then(|s| s.parse::<usize>().ok()).unwrap_or(1).max(1)
+            } else {
+                1
+            };
+            let history = agent.lock().await.history.clone();
+            let user_idxs: Vec<usize> = history
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.role == apex_types::Role::User)
+                .map(|(i, _)| i)
+                .collect();
+            let Some(&target) = user_idxs.iter().rev().nth(n - 1) else {
+                app.add_error(&format!("  only {} user turn(s) to redo", user_idxs.len()));
+                return;
+            };
+            let text = history[target].content.clone().unwrap_or_default();
+            if text.is_empty() {
+                app.add_error("  last user message is empty");
+                return;
+            }
+            // Truncate history before the target user turn, rebuild the log,
+            // then re-run the turn.
+            let trimmed: Vec<apex_types::Message> = history[..target].to_vec();
+            {
+                let mut g = agent.lock().await;
+                g.history = trimmed;
+            }
+            rebuild_log_from_history(app, &agent.lock().await.history);
+            app.add_meta(if *cmd == "retry" {
+                "  ↻ retrying last message…".to_string()
+            } else {
+                format!("  ↻ undid {n} turn(s), re-running…")
+            });
+            spawn_turn(agent, app, &text, true);
+        }
+        "compress" => {
+            // Hermes /compress: summarize the older context and keep the
+            // recent turns, so the window fits the budget again.
+            let (history, model) = {
+                let g = agent.lock().await;
+                (g.history.clone(), g.config.model.clone())
+            };
+            let keep = 8usize; // messages kept verbatim (besides system)
+            if history.len() <= keep + 1 {
+                app.add_meta(format!("  context small ({} msgs) — nothing to compress", history.len()));
+                return;
+            }
+            let (system, rest) = match history.split_first() {
+                Some((s, r)) if s.role == apex_types::Role::System => (Some(s.clone()), r.to_vec()),
+                _ => (None, history.clone()),
+            };
+            let (drop, keep_msgs) = if rest.len() > keep {
+                rest.split_at(rest.len() - keep)
+            } else {
+                (&[][..], rest.as_slice())
+            };
+            // Summarize the dropped messages (best effort; fall back to a
+            // plain trim if the provider is offline).
+            let dropped_text: String = drop
+                .iter()
+                .filter_map(|m| m.content.clone())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let summary = {
+                let g = agent.lock().await;
+                let prompt = format!(
+                    "Summarize the following conversation history in 2-3 concise sentences, keeping all decisions, requirements and file paths. This replaces the full history.\n\n{dropped_text}"
+                );
+                let msg = apex_types::Message::user(&prompt);
+                g.provider
+                    .chat(&model, &[msg], &[], Some(300))
+                    .await
+                    .map(|(t, _, _)| t.trim().to_string())
+            }
+            .unwrap_or_else(|_| format!("(previous {} messages trimmed; provider unavailable)", drop.len()));
+            let summary = if summary.is_empty() {
+                format!("(previous {} messages trimmed)", drop.len())
+            } else {
+                summary
+            };
+            let mut new_history = Vec::new();
+            if let Some(s) = system {
+                new_history.push(s);
+            }
+            new_history.push(apex_types::Message::system(format!("Summary of earlier conversation: {summary}")));
+            new_history.extend(keep_msgs.iter().cloned());
+            {
+                let mut g = agent.lock().await;
+                g.history = new_history.clone();
+            }
+            rebuild_log_from_history(app, &new_history);
+            app.add_meta(format!(
+                "  compressed {} messages → summary ({:.0}% smaller)",
+                drop.len(),
+                100.0 * drop.len() as f64 / history.len().max(1) as f64
+            ));
+        }
+        "status" => {
+            let g = agent.lock().await;
+            let msgs = g.history.len();
+            let chars: usize = g.history.iter().filter_map(|m| m.content.as_ref()).map(|c| c.chars().count()).sum();
+            let tokens = g.usage.total_tokens;
+            let prompt_tokens = g.usage.prompt_tokens;
+            let completion_tokens = g.usage.completion_tokens;
+            let model = g.config.model.clone();
+            let cap = g.config.max_iterations;
+            let budget = g.config.run_budget_seconds;
+            drop(g);
+            let n_sessions = crate::session::list().map(|l| l.len()).unwrap_or(0);
+            app.add_meta(format!("  model:    {model}"));
+            app.add_meta(format!("  provider: {}", app.provider));
+            app.add_meta(format!("  context:  {msgs} msgs · {chars} chars"));
+            app.add_meta(format!("  tokens:   {tokens} total ({prompt_tokens} prompt / {completion_tokens} completion)"));
+            app.add_meta(format!("  budget:   {cap} iters{}", budget.map(|b| format!(" · {b}s wall")).unwrap_or_default()));
+            app.add_meta(format!("  sessions: {n_sessions} saved"));
+            app.add_meta(format!("  config:   {}", crate::config::config_dir().join("config.toml").display()));
+        }
+        "reload" => {
+            // Hermes /reload: reload the config into the running session.
+            let cfg = crate::config::load();
+            match cfg {
+                Err(e) => app.add_error(&format!("  reload failed: {e:#}")),
+                Ok(cfg) => {
+                    let cur_provider = app.provider.clone();
+                    let provider = crate::config::resolve_provider(&cfg, Some(&cur_provider), None, None);
+                    if provider.name != cur_provider {
+                        app.add_meta(&format!(
+                            "  provider '{}' no longer in config — default is now '{}'",
+                            cur_provider,
+                            cfg.agent.default_provider
+                        ));
+                    }
+                    let model = crate::config::resolve_model(&cfg, None, &provider);
+                    match apex_provider::Client::new(provider.base_url.clone(), provider.resolved_key()) {
+                        Ok(client) => {
+                            {
+                                let mut g = agent.lock().await;
+                                g.provider = client;
+                                g.config.model = model.clone();
+                                g.config.max_iterations = cfg.agent.max_iterations;
+                                g.config.run_budget_seconds = cfg.agent.run_budget_seconds.filter(|&b| b > 0);
+                                g.config.warn_ratio = cfg.agent.budget_warn_ratio;
+                                if let Some(t) = cfg.agent.tool_timeout_seconds {
+                                    g.config.tool_timeout = std::time::Duration::from_secs(t);
+                                }
+                            }
+                            app.provider = provider.name.clone();
+                            app.model = model.clone();
+                            app.iter_cap = cfg.agent.max_iterations;
+                            if let Ok(ids) = agent.lock().await.provider.list_models().await {
+                                app.models = ids;
+                            }
+                            app.add_meta(format!(
+                                "  reloaded config → provider {}, model {} · {} iters",
+                                app.provider, app.model, cfg.agent.max_iterations
+                            ));
+                        }
+                        Err(e) => app.add_error(&format!("  reload: client failed: {e:#}")),
+                    }
                 }
-                Err(e) => app.add_error(&format!("session list failed: {e:#}")),
+            }
+        }
+        "version" | "v" => {
+            app.add_meta(format!(
+                "  ByteAi (APEX) v{} — Rust autonomous coding agent",
+                env!("CARGO_PKG_VERSION")
+            ));
+        }
+        "copy" => {
+            let last = agent
+                .lock()
+                .await
+                .history
+                .iter()
+                .rev()
+                .find_map(|m| match m.role {
+                    apex_types::Role::Assistant => m.content.clone(),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            if last.trim().is_empty() {
+                app.add_meta("  nothing to copy (no assistant response yet)");
+            } else {
+                match clipboard_copy(&last) {
+                    Ok(msg) => app.add_meta(format!("  {msg} (last response)")),
+                    Err(e) => app.add_error(&format!("  copy failed: {e}")),
+                }
+            }
+        }
+        "diff" => {
+            match git_diff_summary() {
+                Ok(lines) => {
+                    app.add_meta("  git working tree:");
+                    for l in lines {
+                        app.add_meta(format!("    {l}"));
+                    }
+                }
+                Err(e) => app.add_error(&format!("  {e}")),
             }
         }
         "usage" => {
-            app.add_meta(format!("  tokens: {} total", agent.lock().await.usage.total_tokens));
+            let u = agent.lock().await.usage.clone();
+            if parts.get(1).copied() == Some("reset") {
+                let mut g = agent.lock().await;
+                g.usage = apex_types::Usage::default();
+                app.add_meta("  usage reset");
+            } else {
+                app.add_meta(format!(
+                    "  tokens: {} total ({} prompt / {} completion)",
+                    u.total_tokens, u.prompt_tokens, u.completion_tokens
+                ));
+                app.add_meta("  /usage reset — zero the counters");
+            }
         }
         "config" => {
             app.add_meta(format!("  config: {}", crate::config::config_dir().join("config.toml").display()));
@@ -1625,9 +1991,11 @@ mod tests {
     #[test]
     fn every_palette_command_is_handled() {
         let handled = [
-            "help", "model", "provider", "addprovider", "tools",
-            "clear", "save", "usage", "session", "config", "keys", "gates",
-            "subagent", "swarm", "route", "council", "govern", "quit",
+            "help", "status", "new", "retry", "undo", "compress", "title",
+            "model", "provider", "addprovider", "reload", "tools",
+            "clear", "save", "usage", "session", "resume", "config", "keys",
+            "version", "copy", "diff",
+            "subagent", "swarm", "route", "council", "govern", "gates", "quit",
         ];
         for (name, _) in COMMANDS {
             assert!(handled.contains(name), "palette command /{name} has no handler");
@@ -1638,6 +2006,34 @@ mod tests {
                 COMMANDS.iter().any(|(n, _)| *n == name),
                 "handler for /{name} missing from COMMANDS palette"
             );
+        }
+    }
+
+    #[test]
+    fn rebuild_log_roundtrips_history() {
+        let mut app = App::new("m1".into(), "p1".into(), 3);
+        let hist = vec![
+            apex_types::Message::system("sys"),
+            apex_types::Message::user("hello"),
+            apex_types::Message::assistant(Some("hi back".into()), None, None),
+            apex_types::Message::user("again"),
+        ];
+        rebuild_log_from_history(&mut app, &hist);
+        // banner (5 lines + meta) + 2 user + 2 assistant lines
+        let users = app.log.iter().filter(|e| matches!(e, LogEntry::Text { .. })).count();
+        let asst = app.log.iter().filter(|e| matches!(e, LogEntry::Assistant(_))).count();
+        assert_eq!(asst, 2, "assistant lines restored");
+        assert!(users >= 2, "user lines restored: {users}");
+        // The user lines carry the "❯" echo prefix.
+        assert!(app.log.iter().any(|e| matches!(e, LogEntry::Text { content, .. } if content.contains("hello"))));
+    }
+
+    #[test]
+    fn git_diff_summary_reports_clean_tree() {
+        // In a real git repo, it returns status lines; in a non-repo it errors.
+        match git_diff_summary() {
+            Ok(lines) => assert!(!lines.is_empty()),
+            Err(e) => assert!(e.contains("not a git"), "unexpected error: {e}"),
         }
     }
 
