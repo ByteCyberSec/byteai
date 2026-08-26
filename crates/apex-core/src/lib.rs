@@ -44,6 +44,7 @@ impl Phase {
 pub struct AgentConfig {
     pub model: String,
     /// Max model iterations per user turn (each iteration may dispatch tools).
+    /// `0` = unlimited (use `run_budget_seconds` as the real backstop).
     pub max_iterations: u32,
     /// Token budget; compaction triggers above this estimate.
     pub context_budget_tokens: u64,
@@ -52,17 +53,28 @@ pub struct AgentConfig {
     /// Enable tool calling (models without tool support run chat-only).
     pub tools_enabled: bool,
     pub max_tokens: Option<u32>,
+    /// Optional wall-clock budget for one user turn (seconds). Whichever of
+    /// the iteration cap or this budget hits first triggers a graceful
+    /// wrap-up (final answer from partial progress) — both are enforced,
+    /// not either/or.
+    pub run_budget_seconds: Option<u64>,
+    /// Fraction of the iteration budget at which a proactive "begin wrapping
+    /// up" notice is injected into the model context (0.8 = 80%). Disabled
+    /// when max_iterations is 0.
+    pub warn_ratio: f32,
 }
 
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             model: String::new(),
-            max_iterations: 20,
+            max_iterations: 150,
             context_budget_tokens: 200_000,
             tool_timeout: Duration::from_secs(300),
             tools_enabled: true,
             max_tokens: None,
+            run_budget_seconds: None,
+            warn_ratio: 0.8,
         }
     }
 }
@@ -121,9 +133,39 @@ impl Agent {
 
         let mut outcome = AgentOutcome::default();
         let mut tools_active = self.config.tools_enabled;
+        let started = std::time::Instant::now();
+        let capped = self.config.max_iterations;
+        let wall = self.config.run_budget_seconds;
+        let mut warned = false;
+        let mut exhaustion: Option<String> = None;
 
-        for iteration in 0..self.config.max_iterations {
-            outcome.iterations = iteration + 1;
+        loop {
+            // --- Interaction budgets (whichever hits first; 0 = unlimited) ---
+            if capped > 0 && outcome.iterations >= capped {
+                exhaustion = Some(format!("iteration budget ({capped} iters)"));
+                break;
+            }
+            if let Some(b) = wall {
+                if started.elapsed().as_secs() >= b {
+                    exhaustion = Some(format!("wall-clock run budget ({b}s)"));
+                    break;
+                }
+            }
+            // --- Proactive wrap-up nudge before the cap is hit (beyond Hermes) ---
+            if capped > 0 && !warned {
+                let threshold = (capped as f32 * self.config.warn_ratio).max(1.0) as u32;
+                if outcome.iterations + 1 >= threshold {
+                    warned = true;
+                    self.history.push(Message::system(&format!(
+                        "Interaction budget notice: you are near the {capped}-iteration cap \
+                         (about to use {}/{}). If you already have enough to answer, STOP \
+                         calling tools and give your final answer now.",
+                        outcome.iterations + 1, capped
+                    )));
+                }
+            }
+
+            outcome.iterations += 1;
             self.enforce_budget();
             let defs = if tools_active { self.tools.defs() } else { Vec::new() };
 
@@ -264,9 +306,64 @@ impl Agent {
             }
         }
 
-        self.phase = Phase::Blocked;
-        outcome.finished = false;
-        outcome.blocked_reason = Some(format!("exceeded {} tool iterations", self.config.max_iterations));
+        self.phase = Phase::Recovering;
+
+        // --- Graceful budget exhaustion (beyond Hermes: we still deliver a
+        // real final answer from partial progress, and record WHY we stopped) ---
+        let reason = exhaustion.unwrap_or_else(|| format!("iteration budget ({capped} iters)"));
+        self.history.push(Message::system(&format!(
+            "Reached the {reason}. Do NOT call any tools. Provide your best final \
+             answer now, summarizing what you found and completed so far."
+        )));
+        let defs: Vec<apex_types::ToolDef> = Vec::new();
+        let mut content = String::new();
+        let mut reasoning = String::new();
+        match self
+            .provider
+            .chat_stream(&self.config.model, &self.history, &defs, self.config.max_tokens, |ev| {
+                match ev {
+                    StreamEvent::Content(c) => {
+                        content.push_str(&c);
+                        on_text(&c);
+                    }
+                    StreamEvent::Reasoning(r) => reasoning.push_str(&r),
+                    _ => {}
+                }
+            })
+            .await
+        {
+            Ok(()) => {}
+            Err(e) => {
+                // Drop the wrap-up system message so the history stays clean.
+                self.history.pop();
+                self.phase = Phase::Blocked;
+                outcome.finished = false;
+                outcome.blocked_reason = Some(format!("{reason}: wrap-up failed: {e:#}"));
+                outcome.exhausted = true;
+                outcome.exhausted_reason = Some(reason);
+                return Ok(outcome);
+            }
+        }
+        outcome.iterations += 1;
+        let est = (content.len() / 4) as u64 + estimate_tokens(&self.history);
+        self.usage.total_tokens += est;
+        outcome.usage = self.usage.clone();
+        if !content.trim().is_empty() {
+            self.history.push(Message::assistant(
+                Some(content.clone()),
+                None,
+                if reasoning.is_empty() { None } else { Some(reasoning) },
+            ));
+            self.phase = Phase::Complete;
+            outcome.final_text = content;
+            outcome.finished = true;
+        } else {
+            self.phase = Phase::Blocked;
+            outcome.finished = false;
+            outcome.blocked_reason = Some(format!("{reason}: no final answer produced"));
+        }
+        outcome.exhausted = true;
+        outcome.exhausted_reason = Some(reason);
         Ok(outcome)
     }
 

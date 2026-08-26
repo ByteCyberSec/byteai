@@ -75,6 +75,14 @@ struct ChatArgs {
     /// Auto-save session with this name.
     #[arg(long)]
     save: Option<String>,
+    /// Override the per-turn iteration cap (0 = unlimited). Used by the
+    /// spawn/delegation tool to give each child its own independent budget.
+    #[arg(long)]
+    max_iterations: Option<u32>,
+    /// Override the wall-clock run budget in seconds (0 = off). Whichever of
+    /// iteration cap / this budget hits first wraps the turn up gracefully.
+    #[arg(long)]
+    budget_seconds: Option<u64>,
 }
 
 #[derive(clap::Args)]
@@ -185,7 +193,13 @@ fn build_agent(
     let client = Client::new(provider.base_url.clone(), provider.resolved_key())?;
     let agent_cfg = AgentConfig {
         model: model.clone(),
-        max_iterations: cfg.agent.max_iterations,
+        max_iterations: args.max_iterations.unwrap_or(cfg.agent.max_iterations),
+        run_budget_seconds: match args.budget_seconds {
+            Some(0) | None => cfg.agent.run_budget_seconds.filter(|&b| b > 0),
+            Some(b) => Some(b),
+        },
+        warn_ratio: cfg.agent.budget_warn_ratio,
+        tool_timeout: std::time::Duration::from_secs(cfg.agent.tool_timeout_seconds.unwrap_or(300)),
         tools_enabled: !no_tools,
         ..AgentConfig::default()
     };
@@ -383,6 +397,10 @@ fn report(outcome: &apex_types::AgentOutcome, agent: &Agent) {
     println!();
     if outcome.finished {
         println!("[done: {} iterations, {} tool calls, {} tokens, phase={}]", outcome.iterations, outcome.tool_calls_made, outcome.usage.total_tokens, agent.phase.as_str());
+        if outcome.exhausted {
+            let reason = outcome.exhausted_reason.as_deref().unwrap_or("interaction budget");
+            println!("[⚠ {reason} reached — final answer from partial progress]");
+        }
     } else {
         println!("[blocked: {} — {}]", outcome.blocked_reason.as_deref().unwrap_or("unknown"), agent.phase.as_str());
     }

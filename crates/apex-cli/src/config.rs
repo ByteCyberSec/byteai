@@ -13,7 +13,14 @@ pub struct Config {
     pub providers: Vec<ProviderEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+fn default_max_iterations() -> u32 { 150 }
+fn default_delegation_max_iterations() -> Option<u32> { Some(250) }
+fn default_warn_ratio() -> f32 { 0.8 }
+fn default_true() -> bool { true }
+fn default_auto_min_tools() -> u32 { 5 }
+fn default_auto_min_iters() -> u32 { 10 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSection {
     #[serde(default)]
     pub model: String,
@@ -23,10 +30,46 @@ pub struct AgentSection {
     pub default_provider: String,
     #[serde(default = "default_max_iterations")]
     pub max_iterations: u32,
+    /// Optional wall-clock budget per user turn (seconds). 0 or absent = off.
+    #[serde(default)]
+    pub run_budget_seconds: Option<u64>,
+    /// Per-tool execution timeout in seconds. Default 300.
+    #[serde(default)]
+    pub tool_timeout_seconds: Option<u64>,
+    /// Delegation budget: max iterations each spawned subagent gets.
+    #[serde(default = "default_delegation_max_iterations")]
+    pub delegation_max_iterations: Option<u32>,
+    /// Fraction of the iteration cap at which a proactive "begin wrapping up"
+    /// notice is injected into the model context (0.8 = 80%).
+    #[serde(default = "default_warn_ratio")]
+    pub budget_warn_ratio: f32,
+    /// Auto-run a non-blocking self-review + lesson recording after heavy
+    /// turns (many tool calls or iterations).
+    #[serde(default = "default_true")]
+    pub auto_review_enabled: bool,
+    /// Minimum tool calls in a turn to trigger auto-review.
+    #[serde(default = "default_auto_min_tools")]
+    pub auto_review_min_tools: u32,
+    /// Minimum iterations in a turn to trigger auto-review.
+    #[serde(default = "default_auto_min_iters")]
+    pub auto_review_min_iters: u32,
 }
 
-fn default_max_iterations() -> u32 {
-    20
+impl Default for AgentSection {
+    fn default() -> Self {
+        Self {
+            model: String::new(),
+            default_provider: String::new(),
+            max_iterations: default_max_iterations(),
+            run_budget_seconds: None,
+            tool_timeout_seconds: None,
+            delegation_max_iterations: default_delegation_max_iterations(),
+            budget_warn_ratio: default_warn_ratio(),
+            auto_review_enabled: default_true(),
+            auto_review_min_tools: default_auto_min_tools(),
+            auto_review_min_iters: default_auto_min_iters(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -59,7 +102,12 @@ impl Default for Config {
     fn default() -> Self {
         // Sensible local-first defaults: OmniRoute + any OpenAI-compatible env.
         Self {
-            agent: AgentSection { model: "deepseek-v4-flash".into(), default_provider: String::new(), max_iterations: 20 },
+            agent: AgentSection {
+                model: "deepseek-v4-flash".into(),
+                default_provider: String::new(),
+                max_iterations: default_max_iterations(),
+                ..AgentSection::default()
+            },
             providers: vec![
                 ProviderEntry {
                     name: "omniroute".into(),

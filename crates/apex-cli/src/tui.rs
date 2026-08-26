@@ -55,6 +55,8 @@ enum TurnMsg {
     Tool(apex_types::ToolOutcome),
     Done(apex_types::AgentOutcome),
     Err(String),
+    /// Auto-review result (background self-critique after heavy turns).
+    Review(String),
 }
 
 #[derive(Clone)]
@@ -88,10 +90,18 @@ struct App {
     last_tokens: u64,
     last_iters: u32,
     last_tools: u32,
+    /// Per-turn iteration cap (0 = unlimited), shown in the footer.
+    iter_cap: u32,
     models: Vec<String>,
     model_idx: usize,
     turn_task: Option<tokio::task::JoinHandle<()>>,
     turn_rx: Option<tokio::sync::mpsc::UnboundedReceiver<TurnMsg>>,
+    /// Channel for auto-review results (non-blocking, spawned per heavy turn).
+    review_rx: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
+    review_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    /// The most recent completed turn outcome (consumed by run_loop for
+    /// exhaustion notices + auto-review triggering).
+    last_outcome: Option<apex_types::AgentOutcome>,
     busy: bool,
     busy_since: Option<Instant>,
     spinner_frame: usize,
@@ -101,6 +111,7 @@ struct App {
 
 impl App {
     fn new(model: String, provider: String, tools_count: usize) -> Self {
+        let (review_tx, review_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let mut app = Self {
             log: Vec::new(),
             input: String::new(),
@@ -112,10 +123,14 @@ impl App {
             last_tokens: 0,
             last_iters: 0,
             last_tools: 0,
+            iter_cap: 0,
             models: Vec::new(),
             model_idx: 0,
             turn_task: None,
             turn_rx: None,
+            review_rx: Some(review_rx),
+            review_tx,
+            last_outcome: None,
             busy: false,
             busy_since: None,
             spinner_frame: 0,
@@ -259,6 +274,15 @@ impl App {
 
     /// Drain pending events from the background agent task into the log.
     fn drain(&mut self) {
+        // Auto-review results first: they arrive on their own channel and
+        // must be drained even when turn_rx is None (i.e. between turns).
+        if let Some(mut rrx) = self.review_rx.take() {
+            while let Ok(msg) = rrx.try_recv() {
+                self.add_meta(format!("  🧠 {msg}"));
+            }
+            self.review_rx = Some(rrx);
+        }
+
         let mut rx = match self.turn_rx.take() {
             Some(rx) => rx,
             None => return,
@@ -269,6 +293,13 @@ impl App {
                 Ok(TurnMsg::Tool(o)) => self.add_tool_card(&o.name, o.ok, o.elapsed_ms, &o.output),
                 Ok(TurnMsg::Done(outcome)) => {
                     self.add_done(outcome.iterations, outcome.tool_calls_made, outcome.usage.total_tokens);
+                    // Surface graceful budget exhaustion (final answer from
+                    // partial progress) with WHY it stopped.
+                    if outcome.exhausted {
+                        let reason = outcome.exhausted_reason.as_deref().unwrap_or("interaction budget");
+                        self.add_meta(format!("  ⚠ {reason} reached — final answer from partial progress"));
+                    }
+                    self.last_outcome = Some(outcome);
                     self.busy = false;
                     self.busy_since = None;
                     self.turn_task = None;
@@ -282,14 +313,15 @@ impl App {
                     self.turn_task = None;
                     break;
                 }
+                Ok(TurnMsg::Review(msg)) => self.add_meta(format!("  🧠 {msg}")),
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
                     // Keep draining next frame; put receiver back.
                     self.turn_rx = Some(rx);
-                    return;
+                    break;
                 }
                 Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
                     self.turn_rx = None;
-                    return;
+                    break;
                 }
             }
         }
@@ -304,13 +336,23 @@ pub async fn run() -> anyhow::Result<()> {
     let data_dir = crate::config::data_dir();
     let lsp = Arc::new(apex_lsp::LspRegistry::new(apex_lsp::default_servers()));
     let mut tool_ctx = apex_tools::ToolContext::with_lsp(data_dir.clone(), lsp);
-    tool_ctx = tool_ctx.with_provider(client.clone(), model.clone());
+    tool_ctx = tool_ctx
+        .with_provider(client.clone(), model.clone())
+        .with_limits(cfg.agent.delegation_max_iterations, cfg.agent.run_budget_seconds);
     let tools = apex_tools::Registry::builtins(&tool_ctx);
     let tools_count = tools.names().len();
-    let agent_cfg = apex_core::AgentConfig { model: model.clone(), ..Default::default() };
+    let agent_cfg = apex_core::AgentConfig {
+        model: model.clone(),
+        max_iterations: cfg.agent.max_iterations,
+        run_budget_seconds: cfg.agent.run_budget_seconds.filter(|&b| b > 0),
+        warn_ratio: cfg.agent.budget_warn_ratio,
+        tool_timeout: std::time::Duration::from_secs(cfg.agent.tool_timeout_seconds.unwrap_or(300)),
+        ..Default::default()
+    };
     let agent = Arc::new(tokio::sync::Mutex::new(Agent::new(client, agent_cfg, tools, data_dir)));
 
     let mut app = App::new(model.clone(), provider.name.clone(), tools_count);
+    app.iter_cap = cfg.agent.max_iterations;
     // Warm the model list for Ctrl+Tab switching (best-effort, no block).
     if let Ok(ids) = agent.lock().await.provider.list_models().await {
         if let Some(pos) = ids.iter().position(|m| m == &model) {
@@ -341,9 +383,30 @@ async fn run_loop(
     agent: &Arc<tokio::sync::Mutex<Agent>>,
     app: &mut App,
 ) -> anyhow::Result<()> {
+    // Loaded once: auto-review thresholds are read from config.
+    let rcfg = crate::config::load()?;
     loop {
         terminal.draw(|f| draw(f, app))?;
         app.drain();
+
+        // Auto-review heavy turns in the background (non-blocking): self-critique
+        // the last exchange and record a durable lesson. Beyond Hermes: it is
+        // triggered automatically by config thresholds and never blocks the chat.
+        if let Some(outcome) = app.last_outcome.take() {
+            let heavy = outcome.tool_calls_made >= rcfg.agent.auto_review_min_tools
+                || outcome.iterations >= rcfg.agent.auto_review_min_iters;
+            if rcfg.agent.auto_review_enabled && heavy {
+                let a = agent.clone();
+                let tx = app.review_tx.clone();
+                let data_dir = crate::config::data_dir();
+                let (tools, iters) = (outcome.tool_calls_made, outcome.iterations);
+                tokio::spawn(async move {
+                    if let Some(line) = run_auto_review(&a, data_dir, tools, iters).await {
+                        let _ = tx.send(line);
+                    }
+                });
+            }
+        }
 
         // Auto-run any queued prompts once the current turn finishes, in
         // the order they were typed (echo=false: already shown in chat).
@@ -523,6 +586,77 @@ async fn run_loop(
         }
     }
     Ok(())
+}
+
+/// Background self-review after a heavy turn: critique the last assistant
+/// exchange, record a durable lesson (data_dir/reviews.log), and return a
+/// one-line summary to surface in the transcript. Runs on its own task so it
+/// never blocks the chat. Returns None if there is nothing to review.
+async fn run_auto_review(
+    agent: &Arc<tokio::sync::Mutex<Agent>>,
+    data_dir: std::path::PathBuf,
+    tools: u32,
+    iters: u32,
+) -> Option<String> {
+    let (last_asst, model) = {
+        let g = agent.lock().await;
+        if g.history.is_empty() {
+            return None;
+        }
+        let last = g
+            .history
+            .iter()
+            .rev()
+            .find_map(|m| match &m.role {
+                apex_types::Role::Assistant => m.content.clone(),
+                _ => None,
+            })
+            .unwrap_or_default();
+        if last.trim().is_empty() {
+            return None;
+        }
+        (last, g.config.model.clone())
+    };
+
+    let prompt = format!(
+        "You are reviewing the last exchange for correctness and completeness.\n\
+         Be concise (2-3 sentences). First give a verdict (OK / needs-work), then one \
+         concrete, reusable lesson.\n\n\
+         LAST ASSISTANT OUTPUT:\n{last_asst}"
+    );
+    let msg = apex_types::Message::user(&prompt);
+    let review = agent
+        .lock()
+        .await
+        .provider
+        .chat(&model, &[msg], &[], Some(512))
+        .await
+        .map(|(text, _, _)| text)
+        .unwrap_or_default();
+    let review = review.trim().to_string();
+    if review.is_empty() {
+        return None;
+    }
+
+    // Durable lesson record (append-only).
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Ok(dir) = std::fs::create_dir_all(data_dir.join("reviews")) {
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(data_dir.join("reviews").join("reviews.log"))
+            .and_then(|mut f| {
+                use std::io::Write;
+                writeln!(f, "[{ts}] tools={tools} iters={iters}\n{review}\n")
+            });
+        let _ = dir;
+    }
+
+    let first_line = review.lines().next().unwrap_or(&review).to_string();
+    Some(format!("auto-review ({tools} tools, {iters} iters): {first_line}"))
 }
 
 /// Abort the in-flight turn (if any) and return the UI to idle. Used by
@@ -1131,9 +1265,10 @@ fn draw_input(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_status(f: &mut Frame, area: Rect, app: &App) {
+    let cap = if app.iter_cap > 0 { format!("/{}", app.iter_cap) } else { String::new() };
     let status = format!(
-        "  model: {} | provider: {} | tokens: {} | ·{} iter {} tools | Ctrl+Shift+K/J scroll | Ctrl+C quit",
-        app.model, app.provider, app.last_tokens, app.last_iters, app.last_tools
+        "  model: {} | provider: {} | tokens: {} | ·{}{} iter {} tools | Ctrl+Shift+K/J scroll | Ctrl+C quit",
+        app.model, app.provider, app.last_tokens, app.last_iters, cap, app.last_tools
     );
     let status_widget = Paragraph::new(Text::from(Line::from(Span::styled(
         status,

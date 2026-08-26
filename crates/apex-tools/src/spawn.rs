@@ -1,5 +1,8 @@
 //! Spawn tool (Phase 7 — multi-agent). Run N parallel `byteai chat` sub-processes
-//! with isolated prompts, collect results, bounded concurrency.
+//! with isolated prompts, collect results, bounded concurrency. Each child gets
+//! its OWN independent iteration budget (`delegation_max_iterations`, default
+//! 250 — Hermes parity) and the configured model (not a hardcoded one), so
+//! delegation scales without eating the parent's budget or wrong-model output.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -9,11 +12,19 @@ use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::{BoxFuture, Tool, ok_outcome};
+use crate::{BoxFuture, Tool, ToolContext, ok_outcome};
 
 const AGENT_TIMEOUT: Duration = Duration::from_secs(300);
 
-pub struct SpawnTool;
+pub struct SpawnTool {
+    ctx: ToolContext,
+}
+
+impl SpawnTool {
+    pub fn new(ctx: ToolContext) -> Self {
+        Self { ctx }
+    }
+}
 
 impl Tool for SpawnTool {
     fn name(&self) -> &'static str {
@@ -24,8 +35,10 @@ impl Tool for SpawnTool {
         ToolDef {
             name: "spawn".into(),
             description: "Spawn 1-5 parallel sub-agents, each a `byteai chat` process with \
-an isolated prompt. Collects their outputs. Bounded concurrency (max 5). \
-Use for parallel research, independent code generation, or multi-perspective review.".into(),
+an isolated prompt. Each child gets its own independent iteration budget \
+(config: agent.delegation_max_iterations, default 250). Collects their outputs. \
+Bounded concurrency (max 5). Use for parallel research, independent code \
+generation, or multi-perspective review.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -38,6 +51,7 @@ Use for parallel research, independent code generation, or multi-perspective rev
     }
 
     fn execute(&self, args: Value) -> BoxFuture<'_, ToolOutcome> {
+        let ctx = self.ctx.clone();
         Box::pin(async move {
             let started = std::time::Instant::now();
             let goals: Vec<String> = args
@@ -53,6 +67,12 @@ Use for parallel research, independent code generation, or multi-perspective rev
             // Locate byteai binary.
             let byteai = std::env::current_exe().ok().unwrap_or_else(|| "byteai".into());
 
+            // Child gets the CONFIGURED model (fixes the old hardcoded b.ai)
+            // and its own independent budgets from the parent's config.
+            let model = if ctx.default_model.is_empty() { "deepseek-v4-flash".to_string() } else { ctx.default_model.clone() };
+            let child_iters = ctx.delegation_max_iterations.unwrap_or(250);
+            let child_budget = ctx.run_budget_seconds;
+
             let semaphore = Arc::new(tokio::sync::Semaphore::new(max_parallel));
             let mut handles = Vec::new();
 
@@ -60,12 +80,23 @@ Use for parallel research, independent code generation, or multi-perspective rev
                 let permit = semaphore.clone().acquire_owned().await.unwrap();
                 let cmd = byteai.clone();
                 let g = goal.clone();
+                let child_model = model.clone();
                 handles.push(tokio::spawn(async move {
                     let _permit = permit;
-                    let output = timeout(AGENT_TIMEOUT, Command::new(&cmd)
-                        .args(["chat", "--no-save", "--model", "b.ai", &g])
-                        .output())
-                    .await;
+                    let mut args: Vec<String> = vec![
+                        "chat".into(),
+                        "--no-save".into(),
+                        "--model".into(),
+                        child_model,
+                        "--max-iterations".into(),
+                        child_iters.to_string(),
+                    ];
+                    if let Some(b) = child_budget {
+                        args.push("--budget-seconds".into());
+                        args.push(b.to_string());
+                    }
+                    args.push(g.clone());
+                    let output = timeout(AGENT_TIMEOUT, Command::new(&cmd).args(&args).output()).await;
                     (i, g, output)
                 }));
             }

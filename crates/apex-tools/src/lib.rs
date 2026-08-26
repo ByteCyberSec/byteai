@@ -66,21 +66,32 @@ pub struct ToolContext {
     pub client: Option<apex_provider::Client>,
     /// Effective default model (used by route/council fallbacks).
     pub default_model: String,
+    /// Per-subagent iteration budget for the spawn/delegation tool.
+    pub delegation_max_iterations: Option<u32>,
+    /// Wall-clock budget (seconds) forwarded to spawned subagents.
+    pub run_budget_seconds: Option<u64>,
 }
 
 impl ToolContext {
     pub fn new(data_dir: PathBuf) -> Self {
-        Self { data_dir, lsp: None, dap: None, client: None, default_model: String::new() }
+        Self { data_dir, lsp: None, dap: None, client: None, default_model: String::new(), delegation_max_iterations: None, run_budget_seconds: None }
     }
     pub fn with_lsp(data_dir: PathBuf, lsp: Arc<LspRegistry>) -> Self {
-        Self { data_dir, lsp: Some(lsp), dap: None, client: None, default_model: String::new() }
+        Self { data_dir, lsp: Some(lsp), dap: None, client: None, default_model: String::new(), delegation_max_iterations: None, run_budget_seconds: None }
     }
     pub fn with_all(data_dir: PathBuf, lsp: Arc<LspRegistry>, dap: Arc<apex_dap::DapRegistry>) -> Self {
-        Self { data_dir, lsp: Some(lsp), dap: Some(dap), client: None, default_model: String::new() }
+        Self { data_dir, lsp: Some(lsp), dap: Some(dap), client: None, default_model: String::new(), delegation_max_iterations: None, run_budget_seconds: None }
     }
     pub fn with_provider(mut self, client: apex_provider::Client, default_model: String) -> Self {
         self.client = Some(client);
         self.default_model = default_model;
+        self
+    }
+    /// Attach interaction-budget limits (used by the spawn tool so delegated
+    /// subagents get their own independent iteration/wall-clock budgets).
+    pub fn with_limits(mut self, delegation_max_iterations: Option<u32>, run_budget_seconds: Option<u64>) -> Self {
+        self.delegation_max_iterations = delegation_max_iterations;
+        self.run_budget_seconds = run_budget_seconds;
         self
     }
 }
@@ -122,7 +133,7 @@ impl Registry {
         r.register(Arc::new(debug::DebugTool::new(ctx.dap.clone())));
         r.register(Arc::new(memory::MemoryTool::new(ctx.data_dir.clone())));
         r.register(Arc::new(skills::SkillsTool::new(ctx.data_dir.clone())));
-        r.register(Arc::new(spawn::SpawnTool));
+        r.register(Arc::new(spawn::SpawnTool::new(ctx.clone())));
         r.register(Arc::new(review::ReviewTool::new(ctx.lsp.clone())));
         r.register(Arc::new(plugin::PluginTool::new(ctx.data_dir.clone())));
         r.register(Arc::new(fetch::FetchTool));

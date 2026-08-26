@@ -147,6 +147,12 @@ pub struct AgentOutcome {
     pub iterations: u32,
     pub finished: bool,
     pub blocked_reason: Option<String>,
+    /// True when the turn was stopped by an interaction budget (iteration
+    /// cap or wall-clock run budget) but still produced a final answer from
+    /// partial progress (graceful wrap-up, Hermes-style — but better: we
+    /// record WHY it stopped).
+    pub exhausted: bool,
+    pub exhausted_reason: Option<String>,
 }
 
 /// A provider endpoint configuration.

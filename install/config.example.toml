@@ -8,7 +8,41 @@
 [agent]
 model = "deepseek-v4-flash"
 default_provider = "bai"
-max_iterations = 20
+
+# ---- Interaction budgets (Hermes-style caps, but dual + proactive) ----
+# Per-user-turn tool-calling iteration budget. 0 = unlimited. Whichever of
+# this or run_budget_seconds hits first triggers a graceful wrap-up: the model
+# is asked for a final answer from partial progress (no hard stop), and the
+# reason is recorded. Default 150 (Hermes parity; previously 20).
+max_iterations = 150
+
+# Optional wall-clock budget per user turn (seconds). 0 or absent = off.
+# Use this as the real backstop when max_iterations is unlimited.
+# run_budget_seconds = 600
+
+# Fraction of the iteration cap at which a proactive "begin wrapping up"
+# notice is injected into the model context (0.8 = 80%). Beyond Hermes: the
+# model starts concluding BEFORE the cap is hit. Only applies when
+# max_iterations > 0.
+# budget_warn_ratio = 0.8
+
+# Per-tool execution timeout in seconds. Default 300.
+# tool_timeout_seconds = 300
+
+# ---- Delegation (spawn tool) ----
+# Max iterations each spawned subagent gets — INDEPENDENT of the parent's
+# cap, so children can't eat the parent's budget. Default 250 (Hermes parity).
+# delegation_max_iterations = 250
+
+# ---- Automatic self-improvement review ----
+# After a heavy turn (>= auto_review_min_tools tool calls OR >=
+# auto_review_min_iters iterations), ByteAi runs a NON-BLOCKING background
+# self-critique of the last answer and records a durable lesson to
+# <data_dir>/reviews/reviews.log. Beyond Hermes: automatic, threshold-driven,
+# and never blocks the chat.
+# auto_review_enabled = true
+# auto_review_min_tools = 5
+# auto_review_min_iters = 10
 
 [[providers]]
 name = "bai"
