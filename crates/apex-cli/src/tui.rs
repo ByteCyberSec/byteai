@@ -408,9 +408,19 @@ async fn run_loop(
                     // In command mode, Enter runs the selected palette command
                     // (or completes a unique prefix), like jcode.
                     if let Some(cmd_line) = text.strip_prefix('/') {
-                        let mut cmd_line = cmd_line.to_string();
+                        let mut cmd_line = cmd_line.trim().to_string();
                         let matches = matching_commands(&cmd_line);
-                        if cmd_line.is_empty() && !matches.is_empty() {
+                        if matches.is_empty() {
+                            // Not a known command name or prefix — run as-is
+                            // so /model xyz etc. still work after the name.
+                        } else if cmd_line.is_empty() && !matches.is_empty() {
+                            // Just "/" -> run the highlighted palette command.
+                            cmd_line = matches[app.palette_idx.min(matches.len() - 1)].to_string();
+                        } else if matches.len() == 1 && matches[0] != cmd_line {
+                            // Unique prefix -> complete to the full command.
+                            cmd_line = matches[0].to_string();
+                        } else if matches.len() > 1 && !matches.contains(&cmd_line.as_str()) {
+                            // Ambiguous prefix -> run the highlighted match.
                             cmd_line = matches[app.palette_idx.min(matches.len() - 1)].to_string();
                         }
                         handle_command(agent, app, &cmd_line).await;
@@ -420,10 +430,8 @@ async fn run_loop(
                 }
                 KeyCode::Up => {
                     if app.is_command {
-                        let n = matching_commands(&app.input[1..]).len();
-                        if n > 0 {
-                            app.palette_idx = (app.palette_idx + 1).min(n - 1);
-                        }
+                        // Move selection UP the palette (index 0 = top).
+                        app.palette_idx = app.palette_idx.saturating_sub(1);
                     } else {
                         app.follow_bottom = false;
                         app.scroll = (app.scroll + 1).min(app.log.len().saturating_sub(1));
@@ -431,7 +439,10 @@ async fn run_loop(
                 }
                 KeyCode::Down => {
                     if app.is_command {
-                        app.palette_idx = app.palette_idx.saturating_sub(1);
+                        let n = matching_commands(&app.input[1..]).len();
+                        if n > 0 {
+                            app.palette_idx = (app.palette_idx + 1).min(n - 1);
+                        }
                     } else {
                         app.scroll = app.scroll.saturating_sub(1);
                         if app.scroll == 0 {
@@ -457,12 +468,20 @@ async fn run_loop(
                             let pick = matches[app.palette_idx.min(matches.len() - 1)];
                             app.input = format!("/{pick} ");
                         }
-                    } else {
+                    } else if app.input.is_empty() {
+                        // Enter command mode with exactly ONE leading slash.
+                        // (Tab with text already typed is a no-op so "hello"
+                        // can never become the command "/hello".)
                         app.is_command = true;
-                        app.input.insert(0, '/');
+                        app.input.push('/');
                     }
                 }
                 KeyCode::Char(c) => {
+                    // Never allow a second leading slash: typing '/' while
+                    // already in command mode is ignored, so "/" stays "/".
+                    if c == '/' && app.input.starts_with('/') {
+                        continue;
+                    }
                     app.input.push(c);
                     app.is_command = app.input.starts_with('/');
                     if app.is_command {
@@ -543,6 +562,9 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
             app.add_assistant("/session        — list saved sessions");
             app.add_assistant("/config         — show config path");
             app.add_assistant("/keys           — show keybindings");
+            app.add_assistant("/route          — route a task to the best model");
+            app.add_assistant("/council        — multi-model deliberation vote");
+            app.add_assistant("/govern         — constitutional guardrail check");
             app.add_assistant("/subagent       — spawn parallel subagents");
             app.add_assistant("/swarm          — spawn 3-way swarm");
             app.add_assistant("/quit           — exit");
@@ -713,6 +735,20 @@ fn matching_commands(prefix: &str) -> Vec<&'static str> {
         .collect()
 }
 
+/// Compute the visible window into a sorted command list for the palette.
+/// Returns `(offset, visible_count)` so the palette draws
+/// `matches[offset..offset + visible_count]`, with the selection at `sel`
+/// kept on-screen.
+fn palette_window(total: usize, sel: usize, visible: usize) -> (usize, usize) {
+    let visible = visible.max(1);
+    let offset = if total > visible && sel >= visible {
+        sel - visible + 1
+    } else {
+        0
+    };
+    (offset, visible.min(total.saturating_sub(offset)))
+}
+
 fn draw(f: &mut Frame, app: &mut App) {
     // Advance spinner while busy (called every frame).
     if app.busy {
@@ -720,8 +756,13 @@ fn draw(f: &mut Frame, app: &mut App) {
     }
     let area = f.area();
     let palette_h = if app.is_command && !app.input.is_empty() {
-        let n = matching_commands(&app.input[1..]).len().min(10) as u16;
-        if n > 0 { n + 1 } else { 0 }  // border + items
+        let n = matching_commands(&app.input[1..]).len();
+        if n > 0 {
+            // border + up to 10 items (+1 hint row when more match than fit)
+            n.min(10) as u16 + 1 + if n > 10 { 1 } else { 0 }
+        } else {
+            0
+        }
     } else {
         0
     };
@@ -872,12 +913,26 @@ fn draw_chat(f: &mut Frame, area: Rect, app: &App) {
 fn draw_palette(f: &mut Frame, area: Rect, app: &mut App) {
     let prefix = &app.input[1..];
     let matches = matching_commands(prefix);
-    let sel = app.palette_idx.min(matches.len().saturating_sub(1));
+    if matches.is_empty() {
+        return;
+    }
+    // Keep the highlighted row on-screen even when more commands match than
+    // fit in the palette (Up/Down scroll the window, jcode-style).
+    let content_rows = area.height.saturating_sub(1) as usize; // minus border row
+    let show_hint = matches.len() > content_rows;
+    // Reserve one row for the "↑↓ scroll" hint when there's overflow.
+    let visible = if show_hint {
+        content_rows.saturating_sub(1).max(1)
+    } else {
+        content_rows
+    };
+    let (offset, count) = palette_window(matches.len(), app.palette_idx, visible);
+    let sel = app.palette_idx.min(matches.len() - 1);
 
     let mut lines: Vec<Line> = Vec::new();
-    for (i, name) in matches.iter().enumerate() {
+    for (k, name) in matches.iter().enumerate().skip(offset).take(count) {
         let desc = COMMANDS.iter().find(|(n, _)| n == name).map(|(_, d)| *d).unwrap_or("");
-        let selected = i == sel;
+        let selected = k == sel;
         let style = if selected {
             Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
         } else {
@@ -889,6 +944,13 @@ fn draw_palette(f: &mut Frame, area: Rect, app: &mut App) {
             format!("   /{name:<9} {desc}")
         };
         lines.push(Line::from(Span::styled(label, style)));
+    }
+    // Footer hint row when there are more matches than fit (scrollable).
+    if show_hint {
+        lines.push(Line::from(Span::styled(
+            format!("   ↑↓ scroll · {} commands match", matches.len()),
+            Style::default().fg(Color::DarkGray),
+        )));
     }
     let block = Block::default()
         .borders(Borders::TOP)
@@ -920,4 +982,74 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
     ))))
     .style(Style::default().bg(Color::Black));
     f.render_widget(status_widget, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every command in the palette must be handled by handle_command.
+    #[test]
+    fn every_palette_command_is_handled() {
+        let handled = [
+            "help", "model", "models", "provider", "tools", "clear", "save",
+            "usage", "session", "config", "keys", "subagent", "swarm",
+            "route", "council", "govern", "quit",
+        ];
+        for (name, _) in COMMANDS {
+            assert!(handled.contains(name), "palette command /{name} has no handler");
+        }
+        // Every handled command must be reachable from the palette too.
+        for name in handled {
+            assert!(
+                COMMANDS.iter().any(|(n, _)| *n == name),
+                "handler for /{name} missing from COMMANDS palette"
+            );
+        }
+    }
+
+    #[test]
+    fn command_names_are_unique() {
+        let mut names: Vec<&str> = COMMANDS.iter().map(|(n, _)| *n).collect();
+        names.sort_unstable();
+        for w in names.windows(2) {
+            assert_ne!(w[0], w[1], "duplicate command /{}", w[0]);
+        }
+    }
+
+    #[test]
+    fn matching_commands_prefixes() {
+        // Empty prefix matches everything.
+        assert_eq!(matching_commands("").len(), COMMANDS.len());
+        // Unique prefix.
+        assert_eq!(matching_commands("prov"), vec!["provider"]);
+        assert_eq!(matching_commands("hel"), vec!["help"]);
+        // Ambiguous prefix (model, models).
+        assert_eq!(matching_commands("mo"), vec!["model", "models"]);
+        // No match.
+        assert!(matching_commands("zzz").is_empty());
+    }
+
+    #[test]
+    fn palette_window_keeps_selection_visible() {
+        // All fit: no offset.
+        assert_eq!(palette_window(5, 3, 10), (0, 5));
+        // More than visible: offset moves so `sel` stays on screen.
+        assert_eq!(palette_window(17, 0, 10), (0, 10));
+        assert_eq!(palette_window(17, 9, 10), (0, 10)); // last visible slot
+        assert_eq!(palette_window(17, 10, 10), (1, 10)); // scrolls down one
+        assert_eq!(palette_window(17, 16, 10), (7, 10)); // bottom
+        // visible clamps to total.
+        assert_eq!(palette_window(3, 2, 10), (0, 3));
+        // Degenerate cases never panic.
+        assert_eq!(palette_window(0, 0, 0), (0, 0));
+        assert_eq!(palette_window(1, 0, 0), (0, 1));
+    }
+
+    #[test]
+    fn command_descriptions_present() {
+        for (name, desc) in COMMANDS {
+            assert!(!desc.is_empty(), "/{name} has an empty description");
+        }
+    }
 }
