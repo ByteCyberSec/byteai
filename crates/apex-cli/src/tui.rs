@@ -893,7 +893,7 @@ fn draw(f: &mut Frame, app: &mut App) {
             Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(palette_h),
-            Constraint::Length(3),
+            Constraint::Length(5),
             Constraint::Length(1),
         ])
         .split(area);
@@ -1083,13 +1083,37 @@ fn draw_palette(f: &mut Frame, area: Rect, app: &mut App) {
 fn draw_input(f: &mut Frame, area: Rect, app: &App) {
     let prefix = if app.is_command { " / " } else { "> " };
     let display = format!("{prefix}{}", app.input);
-    let input = Paragraph::new(display.as_str())
-        .block(Block::default().borders(Borders::TOP).style(Style::default()))
+
+    // Hard-wrap the display at the inner box width: ratatui's soft-wrap
+    // wraps at WORD boundaries (so "> " + long word became two lines);
+    // a terminal input box must wrap at CHARACTER boundaries instead.
+    let inner_w = area.width.saturating_sub(2).max(1) as usize;
+    let chars: Vec<char> = display.chars().collect();
+    let mut hard_wrapped: Vec<String> = Vec::new();
+    for chunk in chars.chunks(inner_w) {
+        hard_wrapped.push(chunk.iter().collect::<String>());
+    }
+    let text = hard_wrapped.join("\n");
+
+    // Total wrapped rows and how many to skip so the LAST line (where the
+    // cursor is) stays visible inside the box.
+    let total_rows = hard_wrapped.len().max(1);
+    let visible_rows = area.height.saturating_sub(2).max(1) as usize;
+    let scroll = total_rows.saturating_sub(visible_rows);
+
+    let input = Paragraph::new(text)
+        .block(Block::default().borders(Borders::ALL).style(Style::default()))
+        .scroll((scroll as u16, 0))
         .style(Style::default().fg(Color::White));
     f.render_widget(input, area);
-    let cursor_x = prefix.len() + app.input.len() + 1;
-    let cursor_y = area.y + 1;
-    f.set_cursor(cursor_x as u16, cursor_y);
+
+    // Cursor at the end of input, on the last visible wrapped row.
+    let len = chars.len();
+    let col = len % inner_w;
+    let cur_line = (len / inner_w).saturating_sub(scroll);
+    let cursor_x = area.x + 1 + col as u16;
+    let cursor_y = area.y + 1 + cur_line as u16;
+    f.set_cursor(cursor_x, cursor_y);
 }
 
 fn draw_status(f: &mut Frame, area: Rect, app: &App) {
