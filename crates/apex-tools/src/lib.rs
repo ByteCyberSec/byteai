@@ -26,6 +26,8 @@ mod git;
 mod sandbox;
 mod crew;
 mod mcp;
+pub mod schedule;
+mod workflow;
 pub mod note;
 pub mod read;
 pub mod search;
@@ -112,7 +114,7 @@ impl Registry {
         r.register(Arc::new(read::ReadTool::default()));
         r.register(Arc::new(search::SearchTool::default()));
         r.register(Arc::new(edit::EditTool::new(ctx.lsp.clone())));
-        r.register(Arc::new(todo::TodoTool::default()));
+        r.register(Arc::new(todo::TodoTool::new(ctx.data_dir.clone())));
         r.register(Arc::new(note::NoteTool::new(ctx.data_dir.join("memory").join("notes"))));
         r.register(Arc::new(lsp::LspTool::new(ctx.lsp.clone())));
         r.register(Arc::new(verify::VerifyTool::new(ctx.lsp.clone())));
@@ -132,6 +134,8 @@ impl Registry {
         r.register(Arc::new(sandbox::SandboxTool));
         r.register(Arc::new(crew::CrewTool::new(ctx.clone())));
         r.register(Arc::new(mcp::McpTool::new(ctx.data_dir.clone())));
+        r.register(Arc::new(schedule::ScheduleTool::new(ctx.data_dir.clone())));
+        r.register(Arc::new(workflow::WorkflowTool::new(ctx.data_dir.clone())));
         r
     }
 }
