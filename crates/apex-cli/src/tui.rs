@@ -75,6 +75,10 @@ struct App {
     /// When true, new content auto-scrolls to the bottom. Set false on
     /// manual scroll-up, reset true on scroll-down to bottom or new user msg.
     follow_bottom: bool,
+    /// Total scrollable rows above the bottom (recomputed each frame in
+    /// draw_chat). Manual scroll-up is capped by this so the user can reach
+    /// the very top of the transcript — NOT by log entry count.
+    max_scroll: usize,
     /// Prompts queued while a turn is still running; auto-sent in order
     /// when the current turn finishes so questions are never dropped.
     pending_queue: Vec<String>,
@@ -117,6 +121,7 @@ impl App {
             spinner_frame: 0,
             palette_idx: 0,
             follow_bottom: true,
+            max_scroll: 0,
             pending_queue: Vec::new(),
         };
         app.push_banner();
@@ -373,7 +378,7 @@ async fn run_loop(
             // Ctrl+Shift+K / Ctrl+Shift+J: scroll up/down (jcode).
             if key.code == KeyCode::Char('k') && key.modifiers.contains(KeyModifiers::CONTROL) && key.modifiers.contains(KeyModifiers::SHIFT) {
                 app.follow_bottom = false;
-                app.scroll = (app.scroll + 1).min(app.log.len().saturating_sub(1));
+                app.scroll = (app.scroll + 1).min(app.max_scroll.max(1));
                 continue;
             }
             if key.code == KeyCode::Char('j') && key.modifiers.contains(KeyModifiers::CONTROL) && key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -386,7 +391,7 @@ async fn run_loop(
             // Alt+U / Alt+D: page up/down (jcode).
             if key.code == KeyCode::Char('u') && key.modifiers.contains(KeyModifiers::ALT) {
                 app.follow_bottom = false;
-                app.scroll = (app.scroll + 20).min(app.log.len().saturating_sub(1));
+                app.scroll = (app.scroll + 20).min(app.max_scroll.max(1));
                 continue;
             }
             if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::ALT) {
@@ -454,7 +459,7 @@ async fn run_loop(
                         app.palette_idx = app.palette_idx.saturating_sub(1);
                     } else {
                         app.follow_bottom = false;
-                        app.scroll = (app.scroll + 1).min(app.log.len().saturating_sub(1));
+                        app.scroll = (app.scroll + 1).min(app.max_scroll.max(1));
                     }
                 }
                 KeyCode::Down => {
@@ -472,7 +477,7 @@ async fn run_loop(
                 }
                 KeyCode::PageUp => {
                     app.follow_bottom = false;
-                    app.scroll = (app.scroll + 20).min(app.log.len().saturating_sub(1));
+                    app.scroll = (app.scroll + 20).min(app.max_scroll.max(1));
                 }
                 KeyCode::PageDown => {
                     app.scroll = app.scroll.saturating_sub(20);
@@ -947,7 +952,7 @@ fn entry_rows(e: &LogEntry, width: usize) -> usize {
     }
 }
 
-fn draw_chat(f: &mut Frame, area: Rect, app: &App) {
+fn draw_chat(f: &mut Frame, area: Rect, app: &mut App) {
     let max_rows = area.height as usize;
     let total = app.log.len();
     let busy_rows = if app.busy { 1 } else { 0 };
@@ -1016,18 +1021,40 @@ fn draw_chat(f: &mut Frame, area: Rect, app: &App) {
         + busy_rows;
 
     // Scroll offset (rows skipped from the top). follow_bottom pins to the
-    // newest row; manual scroll goes `app.scroll` lines up from the bottom.
+    // newest row; manual scroll-up moves `app.scroll` rows back toward the
+    // top (offset = at_bottom - scroll, never below 0).
     let at_bottom = total_rows.saturating_sub(max_rows);
-    let offset = if app.follow_bottom {
-        at_bottom
-    } else {
-        at_bottom.saturating_add(app.scroll)
-    };
+    if !app.follow_bottom {
+        // Keep the view anchored to the same absolute content when new rows
+        // arrive below while the user is scrolled up (don't drift toward
+        // newer content).
+        let growth = at_bottom.saturating_sub(app.max_scroll);
+        app.scroll = app.scroll.saturating_add(growth);
+    }
+    // Remember how far the user can scroll up (total scrollable rows). This
+    // is a row count, NOT an entry count — capped correctly so long answers
+    // can always be scrolled all the way back to the top.
+    app.max_scroll = at_bottom;
 
     let paragraph = Paragraph::new(lines)
         .wrap(ratatui::widgets::Wrap { trim: false })
-        .scroll(((offset.min(total_rows)) as u16, 0));
+        .scroll(((chat_offset(total_rows, max_rows, app.follow_bottom, app.scroll)) as u16, 0));
     f.render_widget(paragraph, area);
+}
+
+/// Compute the Paragraph scroll offset (rows skipped from the top) for the
+/// chat transcript. `total_rows` = estimated wrapped rows of all content,
+/// `max_rows` = visible chat height. follow_bottom pins to the newest row;
+/// manual scroll moves `scroll` rows back toward the top. The result is
+/// clamped so it can never blank the view (offset > content) or go negative.
+fn chat_offset(total_rows: usize, max_rows: usize, follow_bottom: bool, scroll: usize) -> usize {
+    let at_bottom = total_rows.saturating_sub(max_rows);
+    let offset = if follow_bottom {
+        at_bottom
+    } else {
+        at_bottom.saturating_sub(scroll)
+    };
+    offset.min(total_rows)
 }
 
 /// Command palette shown while typing `/` (jcode-style autocomplete).
@@ -1196,5 +1223,56 @@ mod tests {
         for (name, desc) in COMMANDS {
             assert!(!desc.is_empty(), "/{name} has an empty description");
         }
+    }
+
+    // --- Chat transcript scrolling (the "answers disappear" regression) ---
+    // The offset must never blank the view: it must stay within [0, total_rows]
+    // and always subtract (never add) the manual scroll distance.
+
+    #[test]
+    fn chat_offset_pins_to_bottom_when_following() {
+        // follow_bottom: newest content at the bottom, nothing scrolled.
+        assert_eq!(chat_offset(50, 23, true, 0), 27); // 50 rows, 23 visible
+        assert_eq!(chat_offset(10, 23, true, 0), 0); // fits: no offset
+        assert_eq!(chat_offset(0, 23, true, 0), 0);
+    }
+
+    #[test]
+    fn chat_offset_scrolls_up_by_subtracting() {
+        // Scrolled 1..N rows up from the bottom: offset shrinks toward 0.
+        let total = 50;
+        let rows = 23;
+        let at_bottom = 27;
+        assert_eq!(chat_offset(total, rows, false, 1), at_bottom - 1);
+        assert_eq!(chat_offset(total, rows, false, 10), at_bottom - 10);
+        // All the way up: reach the very top, never below 0.
+        assert_eq!(chat_offset(total, rows, false, at_bottom), 0);
+        assert_eq!(chat_offset(total, rows, false, at_bottom + 999), 0);
+    }
+
+    #[test]
+    fn chat_offset_never_blanks_with_large_entry_scroll() {
+        // Regression: the old code capped the manual scroll at log entry count
+        // (e.g. 455 entries after a 450-line answer) and ADDED it to the bottom
+        // offset: 892 + 455 = 1347, clamped to total_rows=915 -> blank chat.
+        // The new math subtracts and clamps to [0, total_rows], so content is
+        // always visible and the top is reachable.
+        let total_rows = 915; // long answer wrapped rows
+        let max_rows = 23;
+        let at_bottom = 915 - 23; // 892
+        // Even an absurd scroll distance can never push past the content.
+        assert!(chat_offset(total_rows, max_rows, false, 455) < total_rows);
+        assert_eq!(chat_offset(total_rows, max_rows, false, at_bottom), 0);
+        // follow_bottom on the same content still lands exactly at the bottom.
+        assert_eq!(chat_offset(total_rows, max_rows, true, 0), at_bottom);
+    }
+
+    #[test]
+    fn chat_offset_degrades_gracefully() {
+        // Empty or tiny transcripts never panic or go negative.
+        assert_eq!(chat_offset(0, 0, false, 0), 0);
+        assert_eq!(chat_offset(0, 23, false, 5), 0);
+        assert_eq!(chat_offset(3, 0, true, 0), 3); // no room: offset = total
+        assert_eq!(chat_offset(3, 0, false, 999), 0); // still clamped in-bounds
     }
 }
