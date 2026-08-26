@@ -71,6 +71,9 @@ struct App {
     input: String,
     is_command: bool,
     scroll: usize,
+    /// When true, new content auto-scrolls to the bottom. Set false on
+    /// manual scroll-up, reset true on scroll-down to bottom or new user msg.
+    follow_bottom: bool,
     model: String,
     provider: String,
     tools_count: usize,
@@ -109,6 +112,7 @@ impl App {
             busy_since: None,
             spinner_frame: 0,
             palette_idx: 0,
+            follow_bottom: true,
         };
         app.push_banner();
         app
@@ -140,6 +144,7 @@ impl App {
             });
         }
         self.scroll = 0;
+        self.follow_bottom = true;
     }
 
     fn add_assistant(&mut self, text: &str) {
@@ -161,6 +166,11 @@ impl App {
                 self.log.push(LogEntry::Assistant(line.to_string()));
             }
         }
+        // Auto-follow the newest content while it streams (only if the user
+        // hasn't deliberately scrolled up).
+        if self.follow_bottom {
+            self.scroll = 0;
+        }
         while self.log.len() > MAX_LOG {
             self.log.remove(0);
         }
@@ -175,6 +185,9 @@ impl App {
             elapsed_ms,
             output: preview,
         });
+        if self.follow_bottom {
+            self.scroll = 0;
+        }
     }
 
     fn add_done(&mut self, iter: u32, tools: u32, tokens: u64) {
@@ -195,16 +208,23 @@ impl App {
                 style: Style::default().fg(Color::Red),
             });
         }
+        if self.follow_bottom {
+            self.scroll = 0;
+        }
     }
 
     fn add_meta(&mut self, text: impl Into<String>) {
         self.log.push(LogEntry::Meta(text.into()));
+        if self.follow_bottom {
+            self.scroll = 0;
+        }
     }
 
     fn clear(&mut self) {
         self.log.clear();
         self.push_banner();
         self.scroll = 0;
+        self.follow_bottom = true;
     }
 
     /// Drain pending events from the background agent task into the log.
@@ -319,20 +339,28 @@ async fn run_loop(
             }
             // Ctrl+Shift+K / Ctrl+Shift+J: scroll up/down (jcode).
             if key.code == KeyCode::Char('k') && key.modifiers.contains(KeyModifiers::CONTROL) && key.modifiers.contains(KeyModifiers::SHIFT) {
+                app.follow_bottom = false;
                 app.scroll = (app.scroll + 1).min(app.log.len().saturating_sub(1));
                 continue;
             }
             if key.code == KeyCode::Char('j') && key.modifiers.contains(KeyModifiers::CONTROL) && key.modifiers.contains(KeyModifiers::SHIFT) {
                 app.scroll = app.scroll.saturating_sub(1);
+                if app.scroll == 0 {
+                    app.follow_bottom = true;
+                }
                 continue;
             }
             // Alt+U / Alt+D: page up/down (jcode).
             if key.code == KeyCode::Char('u') && key.modifiers.contains(KeyModifiers::ALT) {
+                app.follow_bottom = false;
                 app.scroll = (app.scroll + 20).min(app.log.len().saturating_sub(1));
                 continue;
             }
             if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::ALT) {
                 app.scroll = app.scroll.saturating_sub(20);
+                if app.scroll == 0 {
+                    app.follow_bottom = true;
+                }
                 continue;
             }
             // Ctrl+Tab / Ctrl+Shift+Tab: next/prev model (jcode).
@@ -384,6 +412,7 @@ async fn run_loop(
                             app.palette_idx = (app.palette_idx + 1).min(n - 1);
                         }
                     } else {
+                        app.follow_bottom = false;
                         app.scroll = (app.scroll + 1).min(app.log.len().saturating_sub(1));
                     }
                 }
@@ -392,13 +421,20 @@ async fn run_loop(
                         app.palette_idx = app.palette_idx.saturating_sub(1);
                     } else {
                         app.scroll = app.scroll.saturating_sub(1);
+                        if app.scroll == 0 {
+                            app.follow_bottom = true;
+                        }
                     }
                 }
                 KeyCode::PageUp => {
+                    app.follow_bottom = false;
                     app.scroll = (app.scroll + 20).min(app.log.len().saturating_sub(1));
                 }
                 KeyCode::PageDown => {
                     app.scroll = app.scroll.saturating_sub(20);
+                    if app.scroll == 0 {
+                        app.follow_bottom = true;
+                    }
                 }
                 KeyCode::Tab => {
                     if app.is_command {
@@ -717,10 +753,12 @@ fn draw_chat(f: &mut Frame, area: Rect, app: &App) {
     let mut items: Vec<ListItem> = Vec::new();
     let max_visible = area.height as usize;
     let total = app.log.len();
-    let start = if app.scroll > 0 {
-        total.saturating_sub(max_visible + app.scroll).min(total.saturating_sub(max_visible))
-    } else {
+    // follow_bottom: always show the newest content (start at bottom).
+    let start = if app.follow_bottom {
         total.saturating_sub(max_visible)
+    } else {
+        // Manual scroll: `scroll` lines up from the bottom.
+        total.saturating_sub(max_visible + app.scroll).min(total.saturating_sub(max_visible))
     };
     let end = total;
 
