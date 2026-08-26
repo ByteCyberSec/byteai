@@ -1,0 +1,66 @@
+=== REPO: jcode ===
+text files: 1785  total LOC(text): 784627
+LICENSE: MIT License |  | Copyright (c) 2025 Jeremy Huang |  | Permission is hereby granted, free of charge, to any person obtaining a copy | of this software and associated documentation files (the "Software"), to deal
+
+-- LOC by top-level dir (files, loc) --
+  crates                         1191 files     639993 loc
+  scripts                         179 files      43041 loc
+  src                              51 files      32093 loc
+  docs                             79 files      19832 loc
+  ios                              75 files      12161 loc
+  (root)                           11 files      11996 loc
+  tests                            21 files       8487 loc
+  telemetry-worker                 44 files       6821 loc
+  sdk                              51 files       5674 loc
+  .github                          12 files       2660 loc
+  changelog                        67 files       1630 loc
+  .jcode                            2 files        221 loc
+  .cargo                            1 files         18 loc
+  .claude                           1 files          0 loc
+
+-- top 45 source files by LOC --
+     4516  crates/jcode-tui/src/tui/app/inline_interactive.rs
+     4478  crates/jcode-tui/src/tui/ui_messages.rs
+     4084  crates/jcode-tui/src/tui/app/input.rs
+     3747  crates/jcode-tui/src/tui/ui.rs
+     3664  crates/jcode-tui/src/tui/app/commands.rs
+     3522  crates/jcode-tui/src/tui/app/auth.rs
+     3482  src/cli/commands.rs
+     3364  crates/jcode-app-core/src/tool/communicate.rs
+     3325  crates/jcode-tui/src/tui/ui_messages/tests.rs
+     3303  crates/jcode-tui/src/tui/app/tests/onboarding_eval.rs
+     3300  crates/jcode-app-core/src/server/client_lifecycle.rs
+     3280  crates/jcode-provider-openrouter-runtime/src/openrouter_tests.rs
+     3188  crates/jcode-tui/src/tui/ui_input.rs
+     3170  crates/jcode-app-core/src/server/swarm.rs
+     3099  crates/jcode-tui-render/src/swarm_gallery.rs
+     3087  crates/jcode-base/src/live_tests.rs
+     3038  crates/jcode-tui/src/tui/session_picker/loading.rs
+     2995  crates/jcode-base/src/provider/mod.rs
+     2981  crates/jcode-app-core/src/tool/discover.rs
+     2964  crates/jcode-tui/src/tui/app/tests/state_model_poke_03.rs
+     2862  crates/jcode-tui/src/tui/app/remote/server_events.rs
+     2776  crates/jcode-provider-openrouter-runtime/src/lib.rs
+     2713  crates/jcode-provider-doctor/src/provider_e2e.rs
+     2675  crates/jcode-tui/src/tui/ui_prepare.rs
+     2667  src/bin/memory_recall_bench.rs
+     2662  crates/jcode-tui/src/tui/app/remote/key_handling.rs
+     2662  crates/jcode-provider-anthropic-runtime/src/lib.rs
+     2652  crates/jcode-setup-hints/src/lib.rs
+     2651  crates/jcode-base/src/auth/lifecycle.rs
+     2625  crates/jcode-app-core/src/server/comm_control.rs
+     2552  crates/jcode-tui/src/tui/app.rs
+     2527  crates/jcode-app-core/src/tool/todo.rs
+     2493  crates/jcode-telemetry-core/src/lib.rs
+     2489  crates/jcode-tui/src/tui/session_picker_tests.rs
+     2469  crates/jcode-base/src/session_tests/cases.rs
+     2453  crates/jcode-tui/src/tui/session_picker.rs
+     2438  crates/jcode-tui/src/tui/app/tests/remote_events_reload_04.rs
+     2437  crates/jcode-tui/src/tui/app/tui_state.rs
+     2435  crates/jcode-base/src/provider/tests/model_resolution.rs
+     2389  crates/jcode-app-core/src/server.rs
+     2306  scripts/swallowed_error_budget.json
+     2284  crates/jcode-harness-api-server/src/translate.rs
+     2239  crates/jcode-tui/src/tui/info_widget.rs
+     2213  crates/jcode-tui/src/tui/app/state_ui.rs
+     2188  crates/jcode-base/src/todo.rs

@@ -1,0 +1,9 @@
+# Reference clones (Phase 0 research only — not part of the build)
+research/repos/
+target/
+*.log
+.DS_Store
+.env
+*.db
+*.db-wal
+*.db-shm

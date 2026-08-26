@@ -1,0 +1,61 @@
+=== REPO: mattpocock-skills ===
+text files: 164  total LOC(text): 9117
+LICENSE: MIT License |  | Copyright (c) 2026 Matt Pocock |  | Permission is hereby granted, free of charge, to any person obtaining a copy | of this software and associated documentation files (the "Software"), to deal | 
+
+-- LOC by top-level dir (files, loc) --
+  skills                          105 files       4415 loc
+  docs                             25 files       2110 loc
+  (root)                            9 files       2010 loc
+  .agents                           5 files        234 loc
+  scripts                           3 files        104 loc
+  .changeset                       11 files         78 loc
+  .claude-plugin                    2 files         71 loc
+  .out-of-scope                     3 files         58 loc
+  .github                           1 files         37 loc
+
+-- top 45 source files by LOC --
+     1385  package-lock.json
+      270  CHANGELOG.md
+      231  README.md
+      207  skills/engineering/triage/AGENT-BRIEF.md
+      204  skills/engineering/wizard/template.sh
+      140  skills/productivity/teach/SKILL.md
+      138  skills/engineering/diagnosing-bugs/SKILL.md
+      128  skills/engineering/wayfinder/SKILL.md
+      123  skills/engineering/improve-codebase-architecture/HTML-REPORT.md
+      118  skills/misc/migrate-to-shoehorn/SKILL.md
+      116  skills/engineering/setup-matt-pocock-skills/SKILL.md
+      114  skills/engineering/codebase-design/SKILL.md
+      112  skills/engineering/triage/SKILL.md
+      112  skills/engineering/prototype/UI.md
+      106  skills/misc/scaffold-exercises/SKILL.md
+      105  skills/engineering/triage/OUT-OF-SCOPE.md
+      105  skills/engineering/to-tickets/SKILL.md
+      103  docs/engineering/wayfinder.md
+      102  skills/in-progress/setup-ts-deep-modules/SKILL.md
+      101  docs/engineering/improve-codebase-architecture.md
+       99  docs/engineering/triage.md
+       99  docs/engineering/to-tickets.md
+       98  docs/engineering/wizard.md
+       97  docs/productivity/teach.md
+       97  docs/engineering/implement.md
+       96  .agents/writing-docs.md
+       95  skills/misc/git-guardrails-claude-code/SKILL.md
+       94  docs/engineering/tdd.md
+       94  docs/engineering/setup-matt-pocock-skills.md
+       94  docs/engineering/code-review.md
+       93  docs/engineering/diagnosing-bugs.md
+       91  skills/misc/setup-pre-commit/SKILL.md
+       90  skills/engineering/ask-matt/SKILL.md
+       90  docs/engineering/ask-matt.md
+       88  docs/engineering/codebase-design.md
+       87  skills/engineering/code-review/SKILL.md
+       87  docs/productivity/grilling.md
+       86  docs/engineering/domain-modeling.md
+       82  docs/engineering/grill-with-docs.md
+       81  skills/productivity/writing-for-agents/SKILL.md
+       81  docs/engineering/to-spec.md
+       79  skills/in-progress/writing-shape/SKILL.md
+       79  skills/in-progress/writing-fragments/SKILL.md
+       78  docs/productivity/to-questionnaire.md
+       77  skills/engineering/tdd/tests.md

@@ -1,0 +1,81 @@
+=== REPO: hermes-agent ===
+text files: 9450  total LOC(text): 2826232
+LICENSE: MIT License |  | Copyright (c) 2025 Nous Research |  | Permission is hereby granted, free of charge, to any person obtaining a copy | of this software and associated documentation files (the "Software"), to dea
+
+-- LOC by top-level dir (files, loc) --
+  tests                          3373 files     866648 loc
+  apps                           2107 files     480188 loc
+  hermes_cli                      293 files     246424 loc
+  optional-skills                 551 files     160215 loc
+  agent                           201 files     152898 loc
+  tools                           158 files     147101 loc
+  plugins                         339 files     142929 loc
+  skills                          485 files     125134 loc
+  gateway                          97 files     115186 loc
+  (root)                           58 files      98137 loc
+  ui-tui                          474 files      97381 loc
+  web                             173 files      54737 loc
+  scripts                          81 files      35484 loc
+  tui_gateway                      30 files      32865 loc
+  cron                             14 files      16381 loc
+  nix                              18 files      10401 loc
+  docs                             20 files       7557 loc
+  locales                          17 files       7547 loc
+  mcp-research-data                 5 files       7113 loc
+  acp_adapter                      11 files       5984 loc
+  .github                          42 files       5307 loc
+  evals                            30 files       3712 loc
+  optional-mcps                    65 files       2696 loc
+  docker                           18 files       1269 loc
+  contributors                    770 files        954 loc
+  tests-js                         10 files        785 loc
+  providers                         3 files        687 loc
+  native                            3 files        295 loc
+  datagen-config-examples           4 files        217 loc
+
+-- top 45 source files by LOC --
+    31593  gateway/run.py
+    21665  cli.py
+    21054  tests/test_tui_gateway_server.py
+    19881  package-lock.json
+    19855  hermes_cli/web_server.py
+    16799  optional-skills/mlops/training/unsloth/references/llms-full.md
+    16433  tui_gateway/server.py
+    15957  apps/desktop/electron/main.ts
+    15417  apps/desktop/src/plugins/hermes-bots/plugin.js
+    14650  hermes_state.py
+    14462  hermes_cli/main.py
+    12139  hermes_cli/kanban_db.py
+    12044  optional-skills/mlops/training/unsloth/references/llms-txt.md
+    11049  plugins/platforms/telegram/adapter.py
+    10880  agent/auxiliary_client.py
+    10597  plugins/platforms/discord/adapter.py
+     9612  plugins/platforms/slack/adapter.py
+     9520  hermes_cli/auth.py
+     9215  run_agent.py
+     8731  hermes_cli/update_cmd.py
+     8598  agent/conversation_loop.py
+     8592  tools/mcp_tool.py
+     8549  gateway/platforms/api_server.py
+     8428  hermes_cli/gateway.py
+     8415  agent/context_compressor.py
+     7809  cron/scheduler.py
+     7500  gateway/platforms/base.py
+     7058  tests/run_agent/test_run_agent.py
+     7039  hermes_cli/models.py
+     6782  hermes_cli/plugins.py
+     6136  gateway/slash_commands.py
+     6072  hermes_cli/config.py
+     6017  hermes_cli/tools_config.py
+     5896  plugins/platforms/feishu/adapter.py
+     5727  tools/approval.py
+     5602  tools/browser_tool.py
+     5548  optional-skills/mlops/training/axolotl/references/api.md
+     5527  apps/desktop/src/app/session/hooks/use-prompt-actions/index.test.tsx
+     5462  plugins/platforms/matrix/adapter.py
+     5405  agent/chat_completion_helpers.py
+     5388  plugins/memory/openviking/__init__.py
+     5352  tests/test_hermes_state.py
+     5321  gateway/platforms/yuanbao.py
+     5246  nix/node-gyp-11-4-0-package-lock.json
+     5055  tests/hermes_cli/test_web_server.py

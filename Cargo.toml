@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = ["crates/apex-types", "crates/apex-provider", "crates/apex-tools", "crates/apex-core", "crates/apex-cli", "crates/apex-lsp", "crates/apex-ast", "crates/apex-dap", "crates/apex-memory"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+authors = ["ByteAi contributors"]
+rust-version = "1.85"
+repository = "https://github.com/byteai/byteai"
+homepage = "https://github.com/byteai/byteai"
+description = "ByteAi (APEX) — fast autonomous coding agent: Rust core, optional power modules (LSP, DAP, memory, skills, multi-agent, routing, review)."
+
+[workspace.dependencies]
+apex-types = { path = "crates/apex-types" }
+apex-provider = { path = "crates/apex-provider" }
+apex-tools = { path = "crates/apex-tools" }
+apex-core = { path = "crates/apex-core" }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "charset"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+regex = "1"
+futures-util = "0.3"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", features = ["serde"] }
+rusqlite = { version = "0.32", features = ["bundled"] }

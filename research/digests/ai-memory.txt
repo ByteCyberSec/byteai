@@ -1,0 +1,64 @@
+=== REPO: ai-memory ===
+text files: 572  total LOC(text): 232191
+LICENSE: MIT License |  | Copyright (c) 2026 Fabio Akita |  | Permission is hereby granted, free of charge, to any person obtaining a copy | of this software and associated documentation files (the "Software"), to deal | 
+
+-- LOC by top-level dir (files, loc) --
+  crates                          297 files     194805 loc
+  docs                             40 files      14466 loc
+  (root)                           18 files      10309 loc
+  companions                        4 files       2634 loc
+  hooks                           162 files       2599 loc
+  scripts                           5 files       2184 loc
+  bin                               6 files       1341 loc
+  .github                           9 files       1122 loc
+  evals                             8 files        888 loc
+  docker                           11 files        801 loc
+  tests                             3 files        751 loc
+  packaging                         9 files        291 loc
+
+-- top 45 source files by LOC --
+    11968  crates/ai-memory-hooks/src/router.rs
+    11150  crates/ai-memory-mcp/src/server.rs
+    10362  crates/ai-memory-mcp/src/admin.rs
+     8668  crates/ai-memory-cli/src/commands/install_hooks.rs
+     8633  crates/ai-memory-store/src/reader.rs
+     8005  crates/ai-memory-store/src/ops.rs
+     6034  crates/ai-memory-store/src/lib.rs
+     4993  crates/ai-memory-workstream/src/transcript.rs
+     4427  crates/ai-memory-wiki/src/wiki.rs
+     3888  CHANGELOG.md
+     3418  crates/ai-memory-consolidate/src/auto_improve.rs
+     3032  crates/ai-memory-cli/src/commands/render_shared.rs
+     2970  crates/ai-memory-web/tests/routes.rs
+     2905  crates/ai-memory-cli/src/commands/serve.rs
+     2848  crates/ai-memory-consolidate/src/consolidator.rs
+     2759  crates/ai-memory-cli/src/cli.rs
+     2688  crates/ai-memory-store/src/writer.rs
+     2549  crates/ai-memory-cli/src/commands/hook.rs
+     2437  crates/ai-memory-cli/src/commands/install_mcp.rs
+     2375  crates/ai-memory-hooks/src/payload.rs
+     2304  crates/ai-memory-cli/src/commands/uninstall.rs
+     2277  crates/ai-memory-cli/src/commands/hook_spool.rs
+     2254  crates/ai-memory-mcp/tests/admin_move.rs
+     2181  crates/ai-memory-cli/src/commands/run.rs
+     2075  docs/install.md
+     2072  crates/ai-memory-cli/src/config.rs
+     1876  crates/ai-memory-workstream/src/harness.rs
+     1756  crates/ai-memory-cli/tests/packaging.rs
+     1700  crates/ai-memory-consolidate/src/bootstrap.rs
+     1692  crates/ai-memory-mcp/src/auth.rs
+     1542  scripts/managed-workstream-acceptance.sh
+     1474  crates/ai-memory-hooks/src/capture_policy.rs
+     1458  crates/ai-memory-store/src/auto_improve.rs
+     1453  crates/ai-memory-web/src/routes/api.rs
+     1383  crates/ai-memory-hooks/src/workstream.rs
+     1334  crates/ai-memory-cli/tests/removal.rs
+     1292  crates/ai-memory-core/src/active_project.rs
+     1267  docs/mcp-install.md
+     1243  crates/ai-memory-mcp/tests/autoscope_stress.rs
+     1201  crates/ai-memory-web/src/mount.rs
+     1091  crates/ai-memory-cli/src/commands/show.rs
+     1085  crates/ai-memory-consolidate/tests/lifecycle.rs
+     1077  README.md
+     1072  crates/ai-memory-mcp/tests/admin_move_session.rs
+     1013  crates/ai-memory-cli/src/commands/hook_capture.rs

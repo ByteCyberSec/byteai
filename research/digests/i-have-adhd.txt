@@ -1,0 +1,55 @@
+=== REPO: i-have-adhd ===
+text files: 56  total LOC(text): 7462
+LICENSE: MIT License |  | Copyright (c) 2026 Ayoub Ghriss |  | Permission is hereby granted, free of charge, to any person obtaining a copy | of this software and associated documentation files (the "Software"), to deal
+
+-- LOC by top-level dir (files, loc) --
+  .github                          15 files       3969 loc
+  (root)                           13 files       1102 loc
+  scripts                           3 files        886 loc
+  tests                             5 files        468 loc
+  extensions                        2 files        283 loc
+  skills                            3 files        171 loc
+  hooks                             4 files        148 loc
+  .cursor                           1 files        140 loc
+  evals                             4 files        122 loc
+  .opencode                         2 files         88 loc
+  .codex-plugin                     1 files         39 loc
+  .claude-plugin                    2 files         25 loc
+  .agents                           1 files         21 loc
+
+-- top 45 source files by LOC --
+      752  INSTALL.md
+      656  .github/install/INSTALL.zh-CN.md
+      656  .github/install/INSTALL.vi.md
+      656  .github/install/INSTALL.pt-BR.md
+      656  .github/install/INSTALL.ko.md
+      656  .github/install/INSTALL.ja.md
+      428  scripts/check_pi_extension.py
+      371  scripts/run_evals.py
+      222  extensions/i-have-adhd.ts
+      184  tests/test_run_evals.py
+      173  tests/test_always_on_hooks.py
+      140  skills/i-have-adhd/SKILL.md
+      140  .cursor/skills/i-have-adhd/SKILL.md
+      102  README.md
+       99  CONTRIBUTING.md
+       96  .github/readme/README.zh-CN.md
+       96  .github/readme/README.vi.md
+       96  .github/readme/README.pt-BR.md
+       96  .github/readme/README.ko.md
+       96  .github/readme/README.ja.md
+       87  scripts/check_context_compat.ts
+       80  .opencode/plugins/i-have-adhd.mjs
+       71  AGENTS.md
+       70  tests/test_opencode_plugin.py
+       64  .github/pull_request_template.md
+       61  extensions/context-compat.ts
+       55  evals/README.md
+       47  .github/workflows/plugin-load-check.yml
+       44  hooks/always-on.mjs
+       42  .github/workflows/claude.yml
+       39  .codex-plugin/plugin.json
+       37  hooks/always-on.sh
+       33  evals/runners.example.json
+       31  tests/test_omp_package.py
+       31  .github/workflows/pi-load-check.yml

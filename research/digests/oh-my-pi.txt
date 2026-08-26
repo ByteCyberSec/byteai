@@ -1,0 +1,66 @@
+=== REPO: oh-my-pi ===
+text files: 6453  total LOC(text): 3161436
+LICENSE: MIT License |  | Copyright (c) 2025 Mario Zechner | Copyright (c) 2025-2026 Can Bölük | Copyright (c) 2026 Stencil Labs, Inc. |  | Permission is hereby granted, free of charge, to any person obtaining a copy | of t
+
+-- LOC by top-level dir (files, loc) --
+  packages                       5511 files    1851415 loc
+  crates                          492 files    1139065 loc
+  python                          147 files      52716 loc
+  (root)                           35 files      50378 loc
+  docs                            137 files      32111 loc
+  scripts                          74 files      25417 loc
+  infra                             8 files       2744 loc
+  nix                               5 files       2598 loc
+  .github                          13 files       1525 loc
+  .omp                             11 files       1411 loc
+  bazel                            16 files       1278 loc
+  patches                           2 files        724 loc
+  .cargo                            1 files         30 loc
+  .config                           1 files         24 loc
+
+-- top 45 source files by LOC --
+   312264  packages/catalog/src/models.json
+   263173  crates/pi-natives/tools/cache/deepseek-v3.tokenizer.json
+     9831  packages/coding-agent/src/session/agent-session.ts
+     9635  crates/pi-builtins/src/sed.rs
+     8329  packages/catalog/src/discovery/cursor-proto.ts
+     6893  packages/ai/src/auth-storage.ts
+     6769  packages/catalog/src/provider-models/openai-compat.ts
+     6416  packages/ai/src/providers/openai-responses-wire.ts
+     6330  packages/ai/test/openai-codex-stream.test.ts
+     6282  packages/coding-agent/src/config/settings-schema.ts
+     5773  packages/coding-agent/src/modes/interactive-mode.ts
+     5754  packages/coding-agent/test/advisor/advisor.test.ts
+     5732  crates/pi-builtins/src/sort.rs
+     5669  crates/pi-shell/src/shell.rs
+     5416  crates/pi-builtins/src/find.rs
+     5413  packages/ai/src/providers/cursor.ts
+     5408  packages/coding-agent/test/agent-session-retry-fallback.test.ts
+     5279  crates/pi-builtins/src/ls.rs
+     5254  crates/pi-natives/fixtures/cl100k_base.json
+     5158  packages/agent/test/agent-loop.test.ts
+     5096  crates/pi-natives/fixtures/o200k_base.json
+     4945  python/robomp/tests/test_host_tools.py
+     4927  crates/pi-walker/src/lib.rs
+     4904  packages/ai/test/gitlab-duo-workflow-provider.test.ts
+     4872  packages/ai/src/providers/openai-codex-responses.ts
+     4832  packages/coding-agent/test/tools/lsp-regressions.test.ts
+     4555  packages/ai/src/providers/cursor/proto/agent.proto
+     4399  packages/ai/src/providers/anthropic.ts
+     4163  packages/coding-agent/src/sdk.ts
+     4157  packages/ai/src/providers/devin/proto/exa/codeium_common_pb/codeium_common.proto
+     4046  packages/omptype/src/type.ts
+     4028  packages/coding-agent/src/session/session-maintenance.ts
+     3973  packages/coding-agent/src/edit/sloppy.ts
+     3881  packages/coding-agent/test/extensions-runner.test.ts
+     3845  crates/pi-builtins/src/tail.rs
+     3834  packages/ai/src/providers/openai-shared.ts
+     3679  packages/tui/src/components/markdown.ts
+     3667  packages/tui/src/components/editor.ts
+     3645  packages/coding-agent/test/secrets-obfuscator.test.ts
+     3590  packages/coding-agent/src/task/executor.ts
+     3311  packages/coding-agent/test/acp-agent.test.ts
+     3282  crates/pi-natives/src/grep.rs
+     3268  packages/ai/src/providers/devin/proto/exa/cortex_pb/cortex.proto
+     3262  packages/coding-agent/test/tools.test.ts
+     3244  packages/ai/test/auth-storage-codex-selection.test.ts

@@ -1,0 +1,29 @@
+# ByteAi default config — copy to ~/.config/byteai/config.toml (or
+# ~/Library/Application Support/byteai/config.toml on macOS).
+#
+# The [agent] model + default_provider pick the default chat surface.
+# Provider keys: either inline `api_key` or `api_key_env` (env var name).
+# Override at runtime with BYTEAI_PROVIDER / BYTEAI_MODEL / BYTEAI_BASE_URL / BYTEAI_API_KEY.
+
+[agent]
+model = "deepseek-v4-flash"
+default_provider = "bai"
+max_iterations = 20
+
+[[providers]]
+name = "bai"
+base_url = "https://api.b.ai/v1"
+api_key_env = "B_AI_API_KEY"
+model = "deepseek-v4-flash"
+
+[[providers]]
+name = "openai"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-4o-mini"
+
+[[providers]]
+name = "ollama"
+base_url = "http://localhost:11434/v1"
+api_key = ""
+model = "qwen2.5-coder:7b"
