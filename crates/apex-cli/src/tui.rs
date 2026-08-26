@@ -7,7 +7,7 @@
 //! Responsiveness model (jcode-style): the agent turn runs in a background
 //! tokio task; text tokens and tool events stream back through an mpsc
 //! channel and are rendered live. While busy, the header shows a spinner
-//! and an elapsed-seconds counter. Ctrl+C aborts the in-flight task.
+//! and an elapsed-seconds counter. Esc / Ctrl+C abort the in-flight task.
 
 use std::io;
 use std::sync::Arc;
@@ -363,14 +363,7 @@ async fn run_loop(
             // Ctrl+C: interrupt in-flight turn, else quit.
             if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                 if app.busy {
-                    if let Some(h) = app.turn_task.take() {
-                        h.abort();
-                    }
-                    app.busy = false;
-                    app.busy_since = None;
-                    app.turn_rx = None;
-                    app.pending_queue.clear();
-                    app.add_meta("  ⚡ interrupted (Ctrl+C)");
+                    interrupt_turn(app, "Ctrl+C");
                     continue;
                 }
                 break;
@@ -418,9 +411,14 @@ async fn run_loop(
             }
             match key.code {
                 KeyCode::Esc => {
-                    app.input.clear();
-                    app.is_command = false;
-                    app.palette_idx = 0;
+                    if app.busy {
+                        // Esc interrupts the in-flight response (like Ctrl+C).
+                        interrupt_turn(app, "Esc");
+                    } else {
+                        app.input.clear();
+                        app.is_command = false;
+                        app.palette_idx = 0;
+                    }
                 }
                 KeyCode::Enter => {
                     let text = app.input.trim().to_string();
@@ -525,6 +523,19 @@ async fn run_loop(
         }
     }
     Ok(())
+}
+
+/// Abort the in-flight turn (if any) and return the UI to idle. Used by
+/// Ctrl+C and Esc — both interrupt a streaming response.
+fn interrupt_turn(app: &mut App, how: &str) {
+    if let Some(h) = app.turn_task.take() {
+        h.abort();
+    }
+    app.busy = false;
+    app.busy_since = None;
+    app.turn_rx = None;
+    app.pending_queue.clear();
+    app.add_meta(&format!("  ⚡ interrupted ({how})"));
 }
 
 /// Spawn the agent turn in a background task; stream events via a channel
@@ -766,7 +777,7 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
             app.add_assistant("  Alt+U / Alt+D    page up/down");
             app.add_assistant("  Ctrl+Tab         next model  ·  Ctrl+Shift+Tab  prev model");
             app.add_assistant("  Up / Down        scroll transcript");
-            app.add_assistant("  Esc              clear input");
+            app.add_assistant("  Esc              interrupt turn / clear input");
             app.add_assistant("  Tab              toggle command mode");
             app.add_assistant("  Ctrl+C           interrupt turn / quit");
         }
@@ -1274,5 +1285,33 @@ mod tests {
         assert_eq!(chat_offset(0, 23, false, 5), 0);
         assert_eq!(chat_offset(3, 0, true, 0), 3); // no room: offset = total
         assert_eq!(chat_offset(3, 0, false, 999), 0); // still clamped in-bounds
+    }
+
+    // --- Turn interruption (Esc / Ctrl+C) ---
+
+    #[test]
+    fn interrupt_turn_resets_state_and_annotates() {
+        let mut app = App::new("m1".into(), "mock".into(), 27);
+        app.busy = true;
+        app.busy_since = Some(std::time::Instant::now());
+        let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        app.turn_rx = Some(rx);
+        app.pending_queue.push("queued question".to_string());
+        let before = app.log.len();
+
+        interrupt_turn(&mut app, "Esc");
+
+        assert!(!app.busy, "busy must clear");
+        assert!(app.busy_since.is_none(), "busy timer must clear");
+        assert!(app.turn_rx.is_none(), "stream channel must drop");
+        assert!(app.pending_queue.is_empty(), "queued prompts must drop");
+        assert_eq!(app.log.len(), before + 1, "one meta line added");
+        assert!(
+            app.log.iter().any(|e| matches!(
+                e,
+                LogEntry::Meta(m) if m.contains("interrupted (Esc)")
+            )),
+            "interrupt must be annotated in the transcript"
+        );
     }
 }
