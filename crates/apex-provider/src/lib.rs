@@ -134,6 +134,11 @@ impl Client {
     }
 
     /// Streaming chat completion. Calls `on_event` for each parsed event.
+    ///
+    /// Transient failures (HTTP 429 rate-limit, 5xx, connection drops, timeouts)
+    /// are retried with exponential backoff + jitter (respecting `Retry-After`
+    /// when the provider sends it). Without this, one rate-limit reply kills an
+    /// otherwise healthy multi-iteration run at `Phase::Blocked`.
     pub async fn chat_stream(
         &self,
         model: &str,
@@ -164,19 +169,58 @@ impl Client {
             body["max_tokens"] = serde_json::json!(mt);
         }
 
-        let resp = self
-            .http
-            .post(&url)
-            .headers(self.headers())
-            .json(&body)
-            .send()
-            .await
-            .with_context(|| format!("POST {url}"))?;
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            bail!("chat completions returned {status}: {}", truncate(&text, 300));
-        }
+        // --- Send with retry on transient errors (429 / 5xx / network / timeout).
+        // Events only flow after the status check passes, so a retry never
+        // duplicates content already handed to on_event.
+        const MAX_ATTEMPTS: u32 = 4;
+        const BASE_DELAY_MS: u64 = 1_000;
+        let mut attempt: u32 = 0;
+        let resp = loop {
+            attempt += 1;
+            match self
+                .http
+                .post(&url)
+                .headers(self.headers())
+                .json(&body)
+                .send()
+                .await
+                .with_context(|| format!("POST {url}"))
+            {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status.is_success() {
+                        break resp;
+                    }
+                    if !is_transient(&status) || attempt >= MAX_ATTEMPTS {
+                        let text = resp.text().await.unwrap_or_default();
+                        bail!("chat completions returned {status}: {}", truncate(&text, 300));
+                    }
+                    let retry_after = resp
+                        .headers()
+                        .get("retry-after")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| v.parse::<u64>().ok());
+                    let delay = retry_after.map(|s| Duration::from_secs(s))
+                        .unwrap_or_else(|| {
+                            let jitter = jitter_ms();
+                            Duration::from_millis(BASE_DELAY_MS.saturating_mul(1 << (attempt - 1)) + jitter)
+                        });
+                    tracing::warn!(
+                        "chat_stream transient error {status} on attempt {attempt}/{MAX_ATTEMPTS}; retrying in {delay:?}"
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+                Err(e) => {
+                    if attempt >= MAX_ATTEMPTS {
+                        return Err(e);
+                    }
+                    let jitter = jitter_ms();
+                    let delay = Duration::from_millis(BASE_DELAY_MS.saturating_mul(1 << (attempt - 1)) + jitter);
+                    tracing::warn!("chat_stream send error (attempt {attempt}/{MAX_ATTEMPTS}): {e:#}; retrying in {delay:?}");
+                    tokio::time::sleep(delay).await;
+                }
+            }
+        };
 
         let mut stream = resp.bytes_stream();
         let mut buf: Vec<u8> = Vec::new();
@@ -277,10 +321,58 @@ fn truncate(s: &str, n: usize) -> String {
     if s.chars().count() <= n { s.to_string() } else { s.chars().take(n).collect::<String>() + "…" }
 }
 
+/// Whether an HTTP status is worth retrying (rate-limit / server / gateway).
+fn is_transient(status: &reqwest::StatusCode) -> bool {
+    let code = status.as_u16();
+    code == 408 || code == 409 || code == 425 || code == 429
+        || code == 500 || code == 502 || code == 503 || code == 504
+}
+
+/// Tiny deterministic jitter (0..500ms) from the clock — avoids thundering
+/// herds without pulling in a rand dependency.
+fn jitter_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64)
+        .unwrap_or(0);
+    nanos % 500
+}
+
 #[allow(dead_code)]
 fn _assert_send() {
     fn assert_send<T: Send>() {}
     assert_send::<Client>();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transient_statuses_are_retryable() {
+        for code in [408u16, 409, 425, 429, 500, 502, 503, 504] {
+            let status = reqwest::StatusCode::from_u16(code).unwrap();
+            assert!(is_transient(&status), "{code} should be transient");
+        }
+        for code in [400u16, 401, 403, 404, 422] {
+            let status = reqwest::StatusCode::from_u16(code).unwrap();
+            assert!(!is_transient(&status), "{code} should NOT be transient");
+        }
+    }
+
+    #[test]
+    fn jitter_is_bounded() {
+        for _ in 0..50 {
+            assert!(jitter_ms() < 500);
+        }
+    }
+
+    #[test]
+    fn truncate_short_and_long() {
+        assert_eq!(truncate("abc", 5), "abc");
+        assert_eq!(truncate("abcdef", 3), "abc…");
+    }
 }
 
 pub mod router;

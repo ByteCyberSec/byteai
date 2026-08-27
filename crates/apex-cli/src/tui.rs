@@ -119,6 +119,9 @@ struct App {
     last_outcome: Option<apex_types::AgentOutcome>,
     busy: bool,
     busy_since: Option<Instant>,
+    /// Duration of the last completed run (seconds), shown when idle so the
+    /// status never reports "finished in 0s" right after a real run.
+    last_run_duration: u64,
     spinner_frame: usize,
     /// Selected command palette index (0-based, 0 = first match).
     palette_idx: usize,
@@ -177,6 +180,7 @@ impl App {
             last_outcome: None,
             busy: false,
             busy_since: None,
+            last_run_duration: 0,
             spinner_frame: 0,
             palette_idx: 0,
             picker: None,
@@ -347,17 +351,21 @@ impl App {
                         let reason = outcome.exhausted_reason.as_deref().unwrap_or("interaction budget");
                         self.add_meta(format!("  ⚠ {reason} reached — final answer from partial progress"));
                     }
+                    if let Some(t) = self.busy_since.take() {
+                        self.last_run_duration = t.elapsed().as_secs().max(1);
+                    }
                     self.last_outcome = Some(outcome);
                     self.busy = false;
-                    self.busy_since = None;
                     self.turn_task = None;
                     // Receiver consumed: leave turn_rx = None.
                     break;
                 }
                 Ok(TurnMsg::Err(e)) => {
                     self.add_error(&e);
+                    if let Some(t) = self.busy_since.take() {
+                        self.last_run_duration = t.elapsed().as_secs().max(1);
+                    }
                     self.busy = false;
-                    self.busy_since = None;
                     self.turn_task = None;
                     break;
                 }
@@ -1807,7 +1815,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &mut App) {
 /// Shows exactly what the agent is doing right now: phase icon + per-phase
 /// spinner + active tool + iteration progress (Hermes-style).
 fn draw_live_status(f: &mut Frame, area: Rect, app: &mut App) {
-    let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(0);
+    let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(app.last_run_duration);
     let (line, fg, bg) = match app.live.as_ref().and_then(|l| l.try_lock().ok()) {
         Some(l) if app.busy => (
             format!(" {} · {}s", l.line(app.spinner_frame), secs),
@@ -1883,7 +1891,7 @@ fn draw_chat(f: &mut Frame, area: Rect, app: &mut App) {
     // so it's always visible even when the chat is scrolled. The in-chat
     // version is a convenience for users who look at the bottom of the log.
     if app.busy {
-        let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(0);
+        let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(app.last_run_duration);
         let live_line = match app.live.as_ref().and_then(|l| l.try_lock().ok()) {
             Some(l) => l.line(app.spinner_frame),
             None => String::new(),
