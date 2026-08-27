@@ -283,7 +283,7 @@ impl App {
         // instead of dumping them into the chat log. Clears on next run start.
         if let Some(ref l) = self.live {
             if let Ok(mut ls) = l.lock() {
-                ls.note = text.to_string();
+                ls.note = sanitize_note(text);
             }
         }
     }
@@ -327,7 +327,7 @@ impl App {
                     if let Some(ref reason) = outcome.blocked_reason {
                         if let Some(ref l) = self.live {
                             if let Ok(mut ls) = l.lock() {
-                                ls.note = reason.clone();
+                                ls.note = sanitize_note(reason);
                             }
                         }
                     }
@@ -352,7 +352,7 @@ impl App {
                     if let Some(ref l) = self.live {
                         if let Ok(mut ls) = l.lock() {
                             ls.phase = apex_core::Phase::Blocked;
-                            ls.note = e.clone();
+                            ls.note = sanitize_note(&e);
                         }
                     }
                     self.add_error(&e);
@@ -1815,6 +1815,27 @@ fn draw_header(f: &mut Frame, area: Rect, app: &mut App) {
 /// never be truncated or scrolled away (unlike appending to the header line).
 /// Shows exactly what the agent is doing right now: phase icon + per-phase
 /// spinner + active tool + iteration progress (Hermes-style).
+/// Collapse an error/reason into a single-line, bounded note for the
+/// live-status row: strip newlines and control chars, cap the length so a
+/// raw provider error (e.g. a JSON body) can never blow out the 1-row banner.
+fn sanitize_note(text: &str) -> String {
+    const MAX: usize = 96;
+    let mut s = String::with_capacity(text.len().min(MAX + 8));
+    for ch in text.chars() {
+        match ch {
+            '\n' | '\r' | '\t' => s.push(' '),
+            c if c.is_control() => {}
+            c => s.push(c),
+        }
+    }
+    let mut s: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if s.chars().count() > MAX {
+        s = s.chars().take(MAX.saturating_sub(1)).collect();
+        s.push('…');
+    }
+    s
+}
+
 fn draw_live_status(f: &mut Frame, area: Rect, app: &mut App) {
     let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(app.last_run_duration);
     let (line, fg, bg) = match app.live.as_ref().and_then(|l| l.try_lock().ok()) {
@@ -1831,6 +1852,16 @@ fn draw_live_status(f: &mut Frame, area: Rect, app: &mut App) {
         Some(_) => (String::from(" ready — type a message or /help"), Color::DarkGray, Color::Black),
         None if app.busy => (format!(" ~ {secs}s working…"), Color::Yellow, Color::Black),
         None => (String::from(" ready"), Color::DarkGray, Color::Black),
+    };
+    // The status row is a single line: never let a long note (e.g. a raw
+    // provider error) spill past the right edge. Truncate with a clean "…"
+    // so the line always ends at the banner boundary.
+    let max = area.width.saturating_sub(1) as usize;
+    let line = if line.chars().count() > max {
+        let cut: String = line.chars().take(max.saturating_sub(1)).collect();
+        format!("{cut}…")
+    } else {
+        line
     };
     let widget = Paragraph::new(Text::from(Line::from(Span::styled(
         line,
@@ -2099,6 +2130,26 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitize_note_bounds_and_flattens() {
+        // Long multi-line provider error → single line, capped, with ellipsis.
+        let long = format!("RATE_LIMIT: chat completions returned 400 Bad Request: {{\"error\":{{\"message\":\"credit insufficient balance {}\"}}}}", "x".repeat(400));
+        let s = sanitize_note(&long);
+        assert!(!s.contains('\n') && !s.contains('\r') && !s.contains('\t'), "no newlines: {s:?}");
+        assert!(s.chars().count() <= 96, "capped at 96, got {}", s.chars().count());
+        assert!(s.ends_with('…'), "ends with ellipsis: {s:?}");
+        assert!(s.starts_with("RATE_LIMIT:"), "reason prefix preserved: {s:?}");
+
+        // Short note passes through untouched (whitespace-collapsed).
+        let s2 = sanitize_note("shell  exited  1\n");
+        assert_eq!(s2, "shell exited 1");
+        assert!(!s2.ends_with('…'));
+
+        // Control chars stripped, not kept.
+        let s3 = sanitize_note("bad\x01\x02token");
+        assert_eq!(s3, "badtoken");
+    }
 
     /// Every command in the palette must be handled by handle_command.
     #[test]
