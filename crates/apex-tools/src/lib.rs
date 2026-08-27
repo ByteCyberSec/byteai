@@ -12,7 +12,7 @@ pub mod lsp;
 mod verify;
 mod debug;
 mod memory;
-mod skills;
+pub mod skills;
 mod spawn;
 mod review;
 mod plugin;

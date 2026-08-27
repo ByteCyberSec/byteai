@@ -98,6 +98,8 @@ struct App {
     pending_queue: Vec<String>,
     model: String,
     provider: String,
+    tools_count: usize,
+    skills_count: usize,
     last_tokens: u64,
     last_iters: u32,
     last_tools: u32,
@@ -155,7 +157,7 @@ enum PickAction {
 }
 
 impl App {
-    fn new(model: String, provider: String) -> Self {
+    fn new(model: String, provider: String, tools_count: usize, skills_count: usize) -> Self {
         let (review_tx, review_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let mut app = Self {
             log: Vec::new(),
@@ -164,6 +166,8 @@ impl App {
             scroll: 0,
             model,
             provider,
+            tools_count,
+            skills_count,
             last_tokens: 0,
             last_iters: 0,
             last_tools: 0,
@@ -388,6 +392,7 @@ pub async fn run() -> anyhow::Result<()> {
         .with_provider(client.clone(), model.clone())
         .with_limits(cfg.agent.delegation_max_iterations, cfg.agent.run_budget_seconds);
     let tools = apex_tools::Registry::builtins(&tool_ctx);
+    let tools_count = tools.names().len();
     let agent_cfg = apex_core::AgentConfig {
         model: model.clone(),
         max_iterations: cfg.agent.max_iterations,
@@ -396,9 +401,9 @@ pub async fn run() -> anyhow::Result<()> {
         tool_timeout: std::time::Duration::from_secs(cfg.agent.tool_timeout_seconds.unwrap_or(300)),
         ..Default::default()
     };
-    let agent = Arc::new(tokio::sync::Mutex::new(Agent::new(client, agent_cfg, tools, data_dir)));
+    let agent = Arc::new(tokio::sync::Mutex::new(Agent::new(client, agent_cfg, tools, data_dir.clone())));
 
-    let mut app = App::new(model.clone(), provider.name.clone());
+    let mut app = App::new(model.clone(), provider.name.clone(), tools_count, count_skills(&data_dir));
     app.iter_cap = cfg.agent.max_iterations;
     // Share the agent's live status so the UI renders what the agent is doing.
     app.live = Some(agent.lock().await.live.clone());
@@ -1794,6 +1799,15 @@ fn draw(f: &mut Frame, app: &mut App) {
     draw_status(f, chunks[5], app);
 }
 
+/// Count installed skills by scanning `<data_dir>/skills/` for SKILL.md files.
+/// Uses the same scanner as the `skills` tool so the header count always
+/// matches what `skills list` reports.
+fn count_skills(data_dir: &std::path::Path) -> usize {
+    let mut metas = Vec::new();
+    apex_tools::skills::scan_dir(&data_dir.join("skills"), &mut metas, 0);
+    metas.len()
+}
+
 fn draw_header(f: &mut Frame, area: Rect, app: &mut App) {
     let header = Line::from(vec![
         Span::styled(" ByteAi ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
@@ -1802,9 +1816,9 @@ fn draw_header(f: &mut Frame, area: Rect, app: &mut App) {
         Span::raw(" · "),
         Span::styled(&app.provider, Style::default().fg(Color::Yellow)),
         Span::raw(" · "),
-        Span::styled("tools", Style::default().fg(Color::Gray)),
+        Span::styled(format!("{} tools", app.tools_count), Style::default().fg(Color::Gray)),
         Span::raw(" · "),
-        Span::styled("skills", Style::default().fg(Color::Gray)),
+        Span::styled(format!("{} skills", app.skills_count), Style::default().fg(Color::Gray)),
     ]);
     f.render_widget(Paragraph::new(header).style(Style::default().bg(Color::Black)), area);
 }
@@ -2174,7 +2188,7 @@ mod tests {
 
     #[test]
     fn rebuild_log_roundtrips_history() {
-        let mut app = App::new("m1".into(), "p1".into());
+        let mut app = App::new("m1".into(), "p1".into(), 3, 0);
         let hist = vec![
             apex_types::Message::system("sys"),
             apex_types::Message::user("hello"),
@@ -2202,7 +2216,7 @@ mod tests {
 
     #[test]
     fn command_debounce_rejects_rapid_repeat() {
-        let mut app = App::new("m1".into(), "p1".into());
+        let mut app = App::new("m1".into(), "p1".into(), 3, 0);
         // First run: accepted, timestamp recorded.
         let fresh = app
             .last_cmd
@@ -2255,7 +2269,7 @@ mod tests {
 
     #[test]
     fn picker_selection_clamps() {
-        let mut app = App::new("m1".into(), "p1".into());
+        let mut app = App::new("m1".into(), "p1".into(), 3, 0);
         app.picker = Some(Picker {
             title: "t".into(),
             items: vec!["a".into(), "b".into(), "c".into()],
@@ -2371,7 +2385,7 @@ mod tests {
 
     #[test]
     fn interrupt_turn_resets_state_and_annotates() {
-        let mut app = App::new("m1".into(), "mock".into());
+        let mut app = App::new("m1".into(), "mock".into(), 27, 0);
         app.busy = true;
         app.busy_since = Some(std::time::Instant::now());
         let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
