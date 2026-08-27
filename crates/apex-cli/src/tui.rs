@@ -2086,10 +2086,9 @@ fn draw_input(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_status(f: &mut Frame, area: Rect, app: &App) {
-    let cap = if app.iter_cap > 0 { format!("/{}", app.iter_cap) } else { String::new() };
     let status = format!(
-        "  model: {} | provider: {} | tokens: {} | ·{}{} iter {} tools | Ctrl+Shift+K/J scroll | Ctrl+C quit",
-        app.model, app.provider, app.last_tokens, app.last_iters, cap, app.last_tools
+        "  model: {} | provider: {} | tokens: {} | Ctrl+Shift+K/J scroll | Ctrl+C quit",
+        app.model, app.provider, app.last_tokens
     );
     let status_widget = Paragraph::new(Text::from(Line::from(Span::styled(
         status,
