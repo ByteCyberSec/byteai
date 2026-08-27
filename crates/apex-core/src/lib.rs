@@ -343,16 +343,51 @@ impl Agent {
             let mut calls: Vec<ToolCall> = Vec::new();
             let mut usage_this_turn: Option<Usage> = None;
 
+            // Reflect what the agent is actually doing: it is now reasoning over
+            // the accumulated tool results (Investigating) rather than sitting
+            // frozen on "Understanding" for the whole stream wait.
+            if outcome.iterations > 1 {
+                self.set_phase(Phase::Investigating);
+            }
+
             let stream_result = self
                 .provider
                 .chat_stream(&self.config.model, &self.history, &defs, self.config.max_tokens, |ev| {
                     match ev {
                         StreamEvent::Content(c) => {
+                            // First content token: the model is answering —
+                            // move off the "Understanding" placeholder so the
+                            // live status shows the real activity.
+                            if content.is_empty() {
+                                if let Ok(mut l) = self.live.try_lock() {
+                                    l.phase = Phase::Verifying;
+                                }
+                            }
                             content.push_str(&c);
                             on_text(&c);
                         }
-                        StreamEvent::Reasoning(r) => reasoning.push_str(&r),
+                        StreamEvent::Reasoning(r) => {
+                            // First reasoning token: model is thinking over
+                            // results — reflect that as Investigating.
+                            if reasoning.is_empty() {
+                                if let Ok(mut l) = self.live.try_lock() {
+                                    l.phase = Phase::Investigating;
+                                }
+                            }
+                            reasoning.push_str(&r);
+                        }
                         StreamEvent::ToolCallDelta(index, id, name, args) => {
+                            // The model is emitting tool calls: flip to Implementing
+                            // immediately so the UI shows "✎ IMPLEMENTING <tool>"
+                            // even before dispatch begins.
+                            if !name.is_empty() {
+                                if let Ok(mut l) = self.live.try_lock() {
+                                    l.phase = Phase::Implementing;
+                                    if !l.active_tools.contains(&name.to_string()) {
+                                        l.active_tools.push(name.to_string());
+                                    }
+                                }
+                            }
                             while calls.len() <= index {
                                 calls.push(ToolCall { id: String::new(), name: String::new(), arguments: String::new() });
                             }
@@ -701,6 +736,67 @@ mod tests {
         let tools = Registry::builtins(&apex_tools::ToolContext::new(data_dir.to_path_buf()));
         let cfg = AgentConfig::default();
         Agent::new(client, cfg, tools, data_dir.to_path_buf())
+    }
+
+    #[test]
+    fn live_status_shared_arc_propagates_phase() {
+        // The TUI clones `agent.live` and polls it every frame. Verify that
+        // phase changes made inside the agent (via set_phase) are visible
+        // through that shared clone — this is the mechanism behind the live
+        // status row updating while a turn runs.
+        let dir = tmp_dir("live_shared");
+        let mut agent = make_agent(&dir);
+
+        // What a TUI would do: clone the Arc once and hold it.
+        let ui = agent.live.clone();
+
+        // Initial state: Understanding.
+        assert_eq!(ui.lock().unwrap().phase, Phase::Understanding);
+
+        // Agent flips phases; UI clone must see each one immediately.
+        agent.set_phase(Phase::Investigating);
+        assert_eq!(ui.lock().unwrap().phase, Phase::Investigating);
+        agent.set_phase(Phase::Implementing);
+        assert_eq!(ui.lock().unwrap().phase, Phase::Implementing);
+        agent.set_phase(Phase::Verifying);
+        assert_eq!(ui.lock().unwrap().phase, Phase::Verifying);
+        agent.set_phase(Phase::Complete);
+        assert_eq!(ui.lock().unwrap().phase, Phase::Complete);
+
+        // line() renders the phase label, active tools, and note.
+        {
+            let mut l = ui.lock().unwrap();
+            l.active_tools = vec!["shell".into()];
+            l.iterations = 3;
+            l.iter_cap = 300;
+            l.note = "test note".into();
+        }
+        let line = ui.lock().unwrap().line(0);
+        assert!(line.contains("IMPLEMENTING") || line.contains("COMPLETE") || line.contains("VERIFYING"), "line(): {line}");
+        assert!(line.contains("shell"), "active tool in line(): {line}");
+        assert!(line.contains("3/300"), "iter/cap in line(): {line}");
+        assert!(line.contains("test note"), "note in line(): {line}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn live_status_line_shows_each_phase() {
+        for (phase, kw) in [
+            (Phase::Understanding, "UNDERSTANDING"),
+            (Phase::Investigating, "INVESTIGATING"),
+            (Phase::Implementing, "IMPLEMENTING"),
+            (Phase::Verifying, "VERIFYING"),
+            (Phase::Recovering, "RECOVERING"),
+            (Phase::Reviewing, "REVIEWING"),
+            (Phase::Complete, "COMPLETE"),
+            (Phase::Blocked, "BLOCKED"),
+        ] {
+            let mut ls = LiveStatus::default();
+            ls.phase = phase;
+            let line = ls.line(0);
+            assert!(line.to_uppercase().contains(kw), "phase {phase:?} -> {line}");
+        }
     }
 
     #[test]

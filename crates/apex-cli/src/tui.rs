@@ -298,14 +298,12 @@ impl App {
     }
 
     fn add_error(&mut self, text: &str) {
-        for line in text.lines() {
-            self.log.push(LogEntry::Text {
-                content: format!("⚠ {line}"),
-                style: Style::default().fg(Color::Red),
-            });
-        }
-        if self.follow_bottom {
-            self.scroll = 0;
+        // Surface errors in the live-status row (via the shared LiveStatus note)
+        // instead of dumping them into the chat log. Clears on next run start.
+        if let Some(ref l) = self.live {
+            if let Ok(mut ls) = l.lock() {
+                ls.note = text.to_string();
+            }
         }
     }
 
@@ -345,6 +343,14 @@ impl App {
                 Ok(TurnMsg::Tool(o)) => self.add_tool_card(&o.name, o.ok, o.elapsed_ms, &o.output),
                 Ok(TurnMsg::Done(outcome)) => {
                     self.add_done(outcome.iterations, outcome.tool_calls_made, outcome.usage.total_tokens);
+                    // Surface the blocked reason (if any) in the live-status row.
+                    if let Some(ref reason) = outcome.blocked_reason {
+                        if let Some(ref l) = self.live {
+                            if let Ok(mut ls) = l.lock() {
+                                ls.note = reason.clone();
+                            }
+                        }
+                    }
                     // Surface graceful budget exhaustion (final answer from
                     // partial progress) with WHY it stopped.
                     if outcome.exhausted {
@@ -361,6 +367,14 @@ impl App {
                     break;
                 }
                 Ok(TurnMsg::Err(e)) => {
+                    // Set the live status to Blocked + note the error so the
+                    // status row reflects the failure (not just the chatbox).
+                    if let Some(ref l) = self.live {
+                        if let Ok(mut ls) = l.lock() {
+                            ls.phase = apex_core::Phase::Blocked;
+                            ls.note = e.clone();
+                        }
+                    }
                     self.add_error(&e);
                     if let Some(t) = self.busy_since.take() {
                         self.last_run_duration = t.elapsed().as_secs().max(1);
@@ -1082,6 +1096,14 @@ fn spawn_turn(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, text: &str,
     app.turn_task = Some(handle);
     app.busy = true;
     app.busy_since = Some(Instant::now());
+    // Clear stale error note from the live status for the new turn.
+    if let Some(ref l) = app.live {
+        if let Ok(mut ls) = l.lock() {
+            ls.note.clear();
+            ls.phase = apex_core::Phase::Understanding;
+            ls.active_tools.clear();
+        }
+    }
 }
 
 async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, cmd_line: &str) {
