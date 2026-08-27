@@ -28,6 +28,7 @@ mod sandbox;
 mod crew;
 mod mcp;
 pub mod schedule;
+mod pi;
 mod workflow;
 mod improve;
 mod gates;
@@ -174,6 +175,7 @@ impl Registry {
             Arc::new(ctx.default_model.clone()),
         )));
         r.register(Arc::new(notify::NotifyTool));
+        r.register(Arc::new(pi::PiTool::new(ctx.data_dir.clone())));
         r
     }
 }
