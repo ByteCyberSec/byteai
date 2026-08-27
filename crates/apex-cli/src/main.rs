@@ -5,6 +5,7 @@
 
 mod config;
 mod session;
+mod serve;
 #[cfg(feature = "tui")]
 mod tui;
 
@@ -40,6 +41,22 @@ enum Cmd {
     /// Invoke a built-in tool directly (no LLM). For debugging/verification.
     #[command(name = "tool")]
     Tool(ToolArgs),
+    /// Run an HTTP daemon: proxy chat completions to the provider (router mode)
+    /// and expose built-in tools over HTTP (daemon mode).
+    Serve(ServeArgs),
+}
+
+#[derive(clap::Args)]
+struct ServeArgs {
+    /// Port to listen on (default 8424).
+    #[arg(long, default_value_t = 8424)]
+    port: u16,
+    /// Override provider base URL (router mode target).
+    #[arg(long)]
+    base_url: Option<String>,
+    /// Override API key.
+    #[arg(long)]
+    api_key: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -151,7 +168,34 @@ async fn main() -> Result<()> {
             }
         }
         Some(Cmd::Tool(ta)) => tool_cmd(ta).await,
+        Some(Cmd::Serve(sa)) => serve_cmd(sa).await,
     }
+}
+
+/// `byteai serve` — HTTP daemon (router + remote tool invocations).
+async fn serve_cmd(sa: crate::ServeArgs) -> Result<()> {
+    let data_dir = config::data_dir();
+    let lsp = Arc::new(apex_lsp::LspRegistry::new(apex_lsp::default_servers()));
+    let dap = Arc::new(apex_dap::DapRegistry::new(apex_dap::default_adapters()));
+    let mut ctx = ToolContext::with_all(data_dir, lsp, dap);
+    if let Ok(cfg) = config::load() {
+        let provider = config::resolve_provider(&cfg, None, sa.base_url.as_deref(), sa.api_key.as_deref());
+        let model = config::resolve_model(&cfg, None, &provider);
+        if let Ok(client) = Client::new(provider.base_url.clone(), provider.resolved_key()) {
+            ctx = ctx.with_provider(client, model);
+        }
+    }
+    let tools = Registry::builtins(&ctx);
+    serve::run(
+        serve::ServeArgs {
+            port: sa.port,
+            base_url: sa.base_url,
+            api_key: sa.api_key,
+        },
+        ctx,
+        tools,
+    )
+    .await
 }
 
 /// Direct tool invocation (no LLM): `byteai tool <name> '<json args>'`.
