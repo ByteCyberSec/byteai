@@ -1779,7 +1779,6 @@ fn draw(f: &mut Frame, app: &mut App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
-            Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(palette_h),
             Constraint::Length(5),
@@ -1788,15 +1787,14 @@ fn draw(f: &mut Frame, app: &mut App) {
         .split(area);
 
     draw_header(f, chunks[0], app);
-    draw_live_status(f, chunks[1], app);
-    draw_chat(f, chunks[2], app);
+    draw_chat(f, chunks[1], app);
     if let Some(p) = &app.picker {
-        draw_picker(f, chunks[3], p);
+        draw_picker(f, chunks[2], p);
     } else if palette_h > 0 {
-        draw_palette(f, chunks[3], app);
+        draw_palette(f, chunks[2], app);
     }
-    draw_input(f, chunks[4], app);
-    draw_status(f, chunks[5], app);
+    draw_input(f, chunks[3], app);
+    draw_status(f, chunks[4], app);
 }
 
 /// Count installed skills by scanning `<data_dir>/skills/` for SKILL.md files.
@@ -1848,41 +1846,6 @@ fn sanitize_note(text: &str) -> String {
     s
 }
 
-fn draw_live_status(f: &mut Frame, area: Rect, app: &mut App) {
-    let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(app.last_run_duration);
-    let (line, fg, bg) = match app.live.as_ref().and_then(|l| l.try_lock().ok()) {
-        Some(l) if app.busy => (
-            format!(" {} · {}s", l.line(app.spinner_frame), secs),
-            Color::Yellow,
-            Color::Black,
-        ),
-        Some(l) if l.iterations > 0 => (
-            format!(" {} · finished in {}s", l.line(app.spinner_frame), secs),
-            Color::DarkGray,
-            Color::Black,
-        ),
-        Some(_) => (String::from(" ready — type a message or /help"), Color::DarkGray, Color::Black),
-        None if app.busy => (format!(" ~ {secs}s working…"), Color::Yellow, Color::Black),
-        None => (String::from(" ready"), Color::DarkGray, Color::Black),
-    };
-    // The status row is a single line: never let a long note (e.g. a raw
-    // provider error) spill past the right edge. Truncate with a clean "…"
-    // so the line always ends at the banner boundary.
-    let max = area.width.saturating_sub(1) as usize;
-    let line = if line.chars().count() > max {
-        let cut: String = line.chars().take(max.saturating_sub(1)).collect();
-        format!("{cut}…")
-    } else {
-        line
-    };
-    let widget = Paragraph::new(Text::from(Line::from(Span::styled(
-        line,
-        Style::default().fg(fg).add_modifier(Modifier::BOLD),
-    ))))
-    .style(Style::default().bg(bg));
-    f.render_widget(widget, area);
-}
-
 fn draw_chat(f: &mut Frame, area: Rect, app: &mut App) {
     let max_rows = area.height as usize;
 
@@ -1928,9 +1891,25 @@ fn draw_chat(f: &mut Frame, area: Rect, app: &mut App) {
         }
     }
 
-    // NOTE: the live status lives only in its own dedicated row
-    // (draw_live_status) below the header, always visible even when the
-    // chat is scrolled — not duplicated inside the chat log.
+    // Live activity status appears right in the chat while the agent is
+    // working, so the user sees exactly what it is doing at the answer
+    // point (Hermes-style): phase-specific icon + spinner + active tool.
+    if app.busy {
+        let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(app.last_run_duration);
+        let live_line = match app.live.as_ref().and_then(|l| l.try_lock().ok()) {
+            Some(l) => l.line(app.spinner_frame),
+            None => String::new(),
+        };
+        let label = if live_line.is_empty() {
+            format!("{secs}s working…")
+        } else {
+            format!("{live_line} · {secs}s")
+        };
+        lines.push(Line::from(vec![
+            Span::styled("  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(label, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        ]));
+    }
 
     let paragraph = Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false });
     // EXACT wrapped row count (same wrapping ratatui uses to render), so the
