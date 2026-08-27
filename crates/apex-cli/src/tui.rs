@@ -777,7 +777,9 @@ async fn run_auto_review(
 }
 
 /// Abort the in-flight turn (if any) and return the UI to idle. Used by
-/// Ctrl+C and Esc — both interrupt a streaming response.
+/// Ctrl+C and Esc — both interrupt a streaming response. Queued prompts are
+/// preserved: the user typed them deliberately, and interrupt only stops the
+/// CURRENT turn, not their follow-ups.
 fn interrupt_turn(app: &mut App, how: &str) {
     if let Some(h) = app.turn_task.take() {
         h.abort();
@@ -785,7 +787,6 @@ fn interrupt_turn(app: &mut App, how: &str) {
     app.busy = false;
     app.busy_since = None;
     app.turn_rx = None;
-    app.pending_queue.clear();
     app.add_meta(&format!("  ⚡ interrupted ({how})"));
 }
 
@@ -1052,7 +1053,19 @@ fn spawn_turn(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, text: &str,
 
     let a2 = Arc::clone(agent);
     let handle = tokio::spawn(async move {
-        let mut guard = a2.lock().await;
+        // Acquire the agent lock defensively: if an interrupted turn is still
+        // unwinding (abort is async — the old task may not have dropped its
+        // MutexGuard yet), waiting forever would freeze the UI. Give it a
+        // bounded window and surface an error instead of hanging.
+        let mut guard = match tokio::time::timeout(Duration::from_secs(15), a2.lock()).await {
+            Ok(g) => g,
+            Err(_) => {
+                let _ = tx.send(TurnMsg::Err(
+                    "previous turn is still shutting down — try again in a moment".into(),
+                ));
+                return;
+            }
+        };
         let tx_text = tx.clone();
         let mut sink = move |t: &str| {
             let _ = tx_text.send(TurnMsg::Text(t.to_string()));
@@ -2357,7 +2370,9 @@ mod tests {
         assert!(!app.busy, "busy must clear");
         assert!(app.busy_since.is_none(), "busy timer must clear");
         assert!(app.turn_rx.is_none(), "stream channel must drop");
-        assert!(app.pending_queue.is_empty(), "queued prompts must drop");
+        // Queued prompts are PRESERVED: the user typed them deliberately and
+        // interrupt only stops the current turn, not their follow-ups.
+        assert_eq!(app.pending_queue.len(), 1, "queued prompts survive interrupt");
         assert_eq!(app.log.len(), before + 1, "one meta line added");
         assert!(
             app.log.iter().any(|e| matches!(

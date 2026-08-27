@@ -291,6 +291,13 @@ impl Agent {
         // mem0-style: recall relevant prior facts into the system prompt
         // so the agent doesn't start each session from scratch.
         self.inject_memories(user_input);
+        // If a previous turn was interrupted (aborted mid-stream), its user
+        // message is still dangling at the tail of history with no assistant
+        // reply. Dropping it here prevents consecutive user turns on the next
+        // run, which providers reject or models misinterpret.
+        if let Some(apex_types::Message { role: Role::User, .. }) = self.history.last() {
+            self.history.pop();
+        }
         self.history.push(Message::user(user_input));
         self.set_phase(Phase::Understanding);
 
@@ -878,5 +885,38 @@ mod tests {
         // Small outputs pass through untouched.
         let small = ToolOutcome { call_id: "c2".into(), name: "echo".into(), output: "hello".into(), ok: true, elapsed_ms: 1 };
         assert_eq!(truncate_tool_output(&small, 50_000), "hello");
+    }
+
+    #[test]
+    fn interrupted_turn_dangling_user_message_is_replaced_not_duplicated() {
+        // After ESC interrupts a turn mid-stream, the agent's history ends
+        // with a User message that has NO assistant reply (the aborted run
+        // pushed the user input but never completed). The next run() must
+        // drop that dangling user message before pushing the new one, so the
+        // provider never sees two consecutive user turns.
+        let dir = tmp_dir("interrupt_dedup");
+        let mut agent = make_agent(&dir);
+        agent.with_system_prompt();
+        agent.inject_memories("q1");
+
+        // Simulate an interrupted turn: user msg pushed, run aborted before
+        // any assistant reply (exactly what happens on ESC mid-stream).
+        agent.history.push(Message::user("q1"));
+        assert!(matches!(agent.history.last(), Some(Message { role: Role::User, .. })));
+
+        // Now the user asks a follow-up ("continue"). run() should replace
+        // the dangling user msg, not stack a second one on top.
+        agent.inject_memories("continue");
+        if let Some(Message { role: Role::User, .. }) = agent.history.last() {
+            agent.history.pop();
+        }
+        agent.history.push(Message::user("continue"));
+
+        // Exactly one trailing user message; no two-in-a-row.
+        let users = agent.history.iter().filter(|m| m.role == Role::User).count();
+        assert_eq!(users, 1, "dangling user msg replaced, not duplicated");
+        assert!(matches!(agent.history.last(), Some(Message { role: Role::User, .. })));
+        assert_eq!(agent.history.last().unwrap().content.as_deref(), Some("continue"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
