@@ -1928,28 +1928,9 @@ fn draw_chat(f: &mut Frame, area: Rect, app: &mut App) {
         }
     }
 
-    // Spinner + live activity status appear right in the chat while the agent
-    // is working, so the user sees exactly what it is doing at the answer
-    // point (Hermes-style): phase-specific icon + spinner + active tool.
-    // NOTE: the live status ALSO appears in its own dedicated row (draw_live_status)
-    // so it's always visible even when the chat is scrolled. The in-chat
-    // version is a convenience for users who look at the bottom of the log.
-    if app.busy {
-        let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(app.last_run_duration);
-        let live_line = match app.live.as_ref().and_then(|l| l.try_lock().ok()) {
-            Some(l) => l.line(app.spinner_frame),
-            None => String::new(),
-        };
-        let label = if live_line.is_empty() {
-            format!("{secs}s working…")
-        } else {
-            format!("{live_line} · {secs}s")
-        };
-        lines.push(Line::from(vec![
-            Span::styled("  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(label, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        ]));
-    }
+    // NOTE: the live status lives only in its own dedicated row
+    // (draw_live_status) below the header, always visible even when the
+    // chat is scrolled — not duplicated inside the chat log.
 
     let paragraph = Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false });
     // EXACT wrapped row count (same wrapping ratatui uses to render), so the
