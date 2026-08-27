@@ -38,6 +38,13 @@ pub mod read;
 pub mod search;
 pub mod shell;
 pub mod todo;
+mod backup;
+mod worktree;
+mod secrets;
+mod kanban;
+mod memsearch;
+mod moa;
+mod notify;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -157,6 +164,16 @@ impl Registry {
         r.register(Arc::new(gates::GatesTool));
         r.register(Arc::new(ideas::IdeasTool::new(ctx.clone())));
         r.register(Arc::new(github::GithubTool::new(ctx.clone())));
+        r.register(Arc::new(backup::BackupTool::new(ctx.data_dir.clone())));
+        r.register(Arc::new(worktree::WorktreeTool));
+        r.register(Arc::new(secrets::SecretsTool::new(ctx.data_dir.clone())));
+        r.register(Arc::new(kanban::KanbanTool::new(ctx.data_dir.clone())));
+        r.register(Arc::new(memsearch::MemsearchTool::new(ctx.data_dir.clone())));
+        r.register(Arc::new(moa::MoaTool::new(
+            Arc::new(ctx.client.clone()),
+            Arc::new(ctx.default_model.clone()),
+        )));
+        r.register(Arc::new(notify::NotifyTool));
         r
     }
 }
