@@ -191,26 +191,7 @@ impl App {
             max_scroll: 0,
             pending_queue: Vec::new(),
         };
-        app.push_banner();
         app
-    }
-
-    fn push_banner(&mut self) {
-        let banner = format!(
-            "╔═ ByteAi APEX ═╗\n\
-             ║ model: {} \n\
-             ║ provider: {} \n\
-             ║ tools: {} \n\
-             ╚══════════════╝",
-            self.model, self.provider, self.tools_count
-        );
-        for line in banner.lines() {
-            self.log.push(LogEntry::Text {
-                content: line.trim_end().to_string(),
-                style: Style::default().fg(Color::Cyan),
-            });
-        }
-        self.log.push(LogEntry::Meta(String::new()));
     }
 
     fn add_user(&mut self, text: &str) {
@@ -317,7 +298,6 @@ impl App {
     fn clear(&mut self) {
         self.log.clear();
         self.pending_queue.clear();
-        self.push_banner();
         self.scroll = 0;
         self.follow_bottom = true;
     }
@@ -919,7 +899,6 @@ fn find_gate_files(root: &str) -> Vec<String> {
 /// /retry, /undo, /compress, /resume and the session picker.
 fn rebuild_log_from_history(app: &mut App, history: &[apex_types::Message]) {
     app.log.clear();
-    app.push_banner();
     for m in history {
         match m.role {
             apex_types::Role::User => {
