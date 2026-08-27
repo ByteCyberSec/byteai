@@ -1768,6 +1768,7 @@ fn draw(f: &mut Frame, app: &mut App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(palette_h),
             Constraint::Length(5),
@@ -1776,33 +1777,18 @@ fn draw(f: &mut Frame, app: &mut App) {
         .split(area);
 
     draw_header(f, chunks[0], app);
-    draw_chat(f, chunks[1], app);
+    draw_live_status(f, chunks[1], app);
+    draw_chat(f, chunks[2], app);
     if let Some(p) = &app.picker {
-        draw_picker(f, chunks[2], p);
+        draw_picker(f, chunks[3], p);
     } else if palette_h > 0 {
-        draw_palette(f, chunks[2], app);
+        draw_palette(f, chunks[3], app);
     }
-    draw_input(f, chunks[3], app);
-    draw_status(f, chunks[4], app);
+    draw_input(f, chunks[4], app);
+    draw_status(f, chunks[5], app);
 }
 
 fn draw_header(f: &mut Frame, area: Rect, app: &mut App) {
-    let busy = if app.busy {
-        let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(0);
-        // Read the live status (phase, active tool, iterations) from the
-        // agent core — try_lock so we never block the UI.
-        let live_line = match app.live.as_ref().and_then(|l| l.try_lock().ok()) {
-            Some(l) => l.line(app.spinner_frame),
-            None => String::new(),
-        };
-        if live_line.is_empty() {
-            format!(" ~ {secs}s")
-        } else {
-            format!(" {live_line} · {secs}s")
-        }
-    } else {
-        String::new()
-    };
     let header = Line::from(vec![
         Span::styled(" ByteAi ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::styled("APEX", Style::default().fg(Color::Magenta)),
@@ -1812,9 +1798,37 @@ fn draw_header(f: &mut Frame, area: Rect, app: &mut App) {
         Span::styled(&app.provider, Style::default().fg(Color::Yellow)),
         Span::raw(" · "),
         Span::styled(format!("{} tools", app.tools_count), Style::default().fg(Color::Gray)),
-        Span::styled(busy, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
     ]);
     f.render_widget(Paragraph::new(header).style(Style::default().bg(Color::Black)), area);
+}
+
+/// Dedicated live-status row, always rendered under the header so it can
+/// never be truncated or scrolled away (unlike appending to the header line).
+/// Shows exactly what the agent is doing right now: phase icon + per-phase
+/// spinner + active tool + iteration progress (Hermes-style).
+fn draw_live_status(f: &mut Frame, area: Rect, app: &mut App) {
+    let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(0);
+    let (line, fg, bg) = match app.live.as_ref().and_then(|l| l.try_lock().ok()) {
+        Some(l) if app.busy => (
+            format!(" {} · {}s", l.line(app.spinner_frame), secs),
+            Color::Yellow,
+            Color::Black,
+        ),
+        Some(l) if l.iterations > 0 => (
+            format!(" {} · finished in {}s", l.line(app.spinner_frame), secs),
+            Color::DarkGray,
+            Color::Black,
+        ),
+        Some(_) => (String::from(" ready — type a message or /help"), Color::DarkGray, Color::Black),
+        None if app.busy => (format!(" ~ {secs}s working…"), Color::Yellow, Color::Black),
+        None => (String::from(" ready"), Color::DarkGray, Color::Black),
+    };
+    let widget = Paragraph::new(Text::from(Line::from(Span::styled(
+        line,
+        Style::default().fg(fg).add_modifier(Modifier::BOLD),
+    ))))
+    .style(Style::default().bg(bg));
+    f.render_widget(widget, area);
 }
 
 fn draw_chat(f: &mut Frame, area: Rect, app: &mut App) {
@@ -1865,6 +1879,9 @@ fn draw_chat(f: &mut Frame, area: Rect, app: &mut App) {
     // Spinner + live activity status appear right in the chat while the agent
     // is working, so the user sees exactly what it is doing at the answer
     // point (Hermes-style): phase-specific icon + spinner + active tool.
+    // NOTE: the live status ALSO appears in its own dedicated row (draw_live_status)
+    // so it's always visible even when the chat is scrolled. The in-chat
+    // version is a convenience for users who look at the bottom of the log.
     if app.busy {
         let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(0);
         let live_line = match app.live.as_ref().and_then(|l| l.try_lock().ok()) {
