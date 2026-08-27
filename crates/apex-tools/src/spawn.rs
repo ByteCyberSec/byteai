@@ -3,6 +3,14 @@
 //! its OWN independent iteration budget (`delegation_max_iterations`, default
 //! 250 — Hermes parity) and the configured model (not a hardcoded one), so
 //! delegation scales without eating the parent's budget or wrong-model output.
+//!
+//! Robustness (fixed 2026-08-27):
+//! - Children do NOT receive `--no-save` (that flag doesn't exist on `chat`;
+//!   it made every child exit immediately with a clap error).
+//! - Every spawned child PID is registered in a shared kill-list. If the
+//!   parent's tool timeout aborts this future mid-collection, the Drop guard
+//!   kills all still-live children, so no orphan `byteai chat` processes are
+//!   left running ("stuck forever" symptom).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,7 +22,47 @@ use tokio::time::timeout;
 
 use crate::{BoxFuture, Tool, ToolContext, ok_outcome};
 
-const AGENT_TIMEOUT: Duration = Duration::from_secs(300);
+const AGENT_TIMEOUT: Duration = Duration::from_secs(240);
+
+/// Best-effort child-process killer. Every spawned child's PID is registered
+/// here; when the collection future is dropped (parent tool timeout, interrupt,
+/// or panic), any still-live children are SIGKILLed so they can't run away.
+#[derive(Default)]
+struct KillList {
+    pids: std::sync::Mutex<Vec<u32>>,
+}
+
+impl KillList {
+    fn register(&self, pid: u32) {
+        if pid != 0 {
+            if let Ok(mut p) = self.pids.lock() {
+                p.push(pid);
+            }
+        }
+    }
+
+    fn deregister(&self, pid: u32) {
+        if let Ok(mut p) = self.pids.lock() {
+            p.retain(|&x| x != pid);
+        }
+    }
+
+    fn kill_all(&self) {
+        let pids: Vec<u32> = self.pids.lock().map(|p| p.clone()).unwrap_or_default();
+        for pid in pids {
+            let _ = std::process::Command::new("kill")
+                .arg("-9")
+                .arg(pid.to_string())
+                .status();
+        }
+    }
+}
+
+impl Drop for KillList {
+    fn drop(&mut self) {
+        self.kill_all();
+    }
+}
 
 pub struct SpawnTool {
     ctx: ToolContext,
@@ -77,6 +125,7 @@ is worthless).".into(),
             let child_budget = ctx.run_budget_seconds;
 
             let semaphore = Arc::new(tokio::sync::Semaphore::new(max_parallel));
+            let kill_list = Arc::new(KillList::default());
             let mut handles = Vec::new();
 
             for (i, goal) in goals.iter().enumerate() {
@@ -84,11 +133,11 @@ is worthless).".into(),
                 let cmd = byteai.clone();
                 let g = goal.clone();
                 let child_model = model.clone();
+                let kl = kill_list.clone();
                 handles.push(tokio::spawn(async move {
                     let _permit = permit;
                     let mut args: Vec<String> = vec![
                         "chat".into(),
-                        "--no-save".into(),
                         "--model".into(),
                         child_model,
                         "--max-iterations".into(),
@@ -99,15 +148,34 @@ is worthless).".into(),
                         args.push(b.to_string());
                     }
                     args.push(g.clone());
-                    let output = timeout(AGENT_TIMEOUT, Command::new(&cmd).args(&args).output()).await;
-                    (i, g, output)
+
+                    let mut child = match Command::new(&cmd).args(&args)
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                    {
+                        Ok(c) => c,
+                        Err(e) => return (i, g, Err(format!("spawn error: {e}"))),
+                    };
+                    let pid = child.id().unwrap_or(0);
+                    kl.register(pid);
+
+                    let out = timeout(AGENT_TIMEOUT, child.wait_with_output()).await;
+                    if let Ok(Ok(_)) = &out {
+                        kl.deregister(pid);
+                    }
+                    match out {
+                        Ok(Ok(o)) => (i, g, Ok(o)),
+                        Ok(Err(e)) => (i, g, Err(format!("io error: {e}"))),
+                        Err(_) => (i, g, Err("timed out".into())),
+                    }
                 }));
             }
 
             let mut results: Vec<(usize, String, String)> = Vec::new();
             for h in handles {
                 match h.await {
-                    Ok((i, g, Ok(Ok(out)))) => {
+                    Ok((i, g, Ok(out))) => {
                         let stdout = String::from_utf8_lossy(&out.stdout);
                         let stderr = String::from_utf8_lossy(&out.stderr);
                         let combined = if out.status.success() {
@@ -117,11 +185,11 @@ is worthless).".into(),
                         };
                         results.push((i, g, combined));
                     }
-                    Ok((i, g, Ok(Err(e)))) => { results.push((i, g, format!("IO error: {e}"))); }
-                    Ok((i, g, Err(_))) => { results.push((i, g, "timed out".into())); }
+                    Ok((i, g, Err(e))) => { results.push((i, g, format!("{e}"))); }
                     Err(e) => { results.push((0, String::new(), format!("join error: {e}"))); }
                 }
             }
+            drop(kill_list); // all children reaped — nothing to kill
 
             results.sort_by_key(|r| r.0);
             let mut out = String::new();
