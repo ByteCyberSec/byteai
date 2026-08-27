@@ -144,6 +144,12 @@ pub struct AgentConfig {
     /// up" notice is injected into the model context (0.8 = 80%). Disabled
     /// when max_iterations is 0.
     pub warn_ratio: f32,
+    /// Hard cap on how many chars of a tool result are injected into the
+    /// model context. Tools like `skills` (this machine has 7000+ skills)
+    /// can return megabytes; a giant blob blows the context budget and the
+    /// provider window, stalling the turn. We truncate with a clear note and
+    /// keep a compact head/tail so the model still sees what happened.
+    pub max_tool_output_chars: usize,
 }
 
 impl Default for AgentConfig {
@@ -157,6 +163,7 @@ impl Default for AgentConfig {
             max_tokens: None,
             run_budget_seconds: None,
             warn_ratio: 0.8,
+            max_tool_output_chars: 50_000,
         }
     }
 }
@@ -475,7 +482,8 @@ impl Agent {
             }
 
             for o in &outcomes {
-                self.history.push(Message::tool(&o.call_id, &o.name, &o.output));
+                let output = truncate_tool_output(o, self.config.max_tool_output_chars);
+                self.history.push(Message::tool(&o.call_id, &o.name, &output));
             }
         }
 
@@ -631,6 +639,28 @@ pub fn estimate_tokens(messages: &[Message]) -> u64 {
     (chars / 4) as u64
 }
 
+/// Cap how much of a tool result goes into the model context. Huge outputs
+/// (e.g. the `skills` listing on a machine with thousands of skills) blow the
+/// context budget and the provider window, which stalls the whole turn. Keep
+/// the head (where the meaningful content usually is) plus a small tail, and
+/// tell the model the full output was truncated and how big it was.
+pub fn truncate_tool_output(o: &ToolOutcome, max_chars: usize) -> String {
+    let raw = &o.output;
+    if raw.chars().count() <= max_chars {
+        return raw.clone();
+    }
+    let head: String = raw.chars().take(max_chars * 2 / 3).collect();
+    let tail: String = raw.chars().skip(raw.chars().count().saturating_sub(max_chars / 3)).collect();
+    format!(
+        "[tool {name} output TRUNCATED: full result was {total} chars, showing first {head_len} + last {tail_len}]\n\n{head}\n\n... [{mid} chars omitted] ...\n\n{tail}\n\n[use the tool again with a narrower query if you need details]",
+        name = o.name,
+        total = raw.chars().count(),
+        head_len = head.chars().count(),
+        tail_len = tail.chars().count(),
+        mid = raw.chars().count().saturating_sub(head.chars().count() + tail.chars().count()),
+    )
+}
+
 /// Failure classification (spec §23). Phase 1: coarse classes; the full
 /// taxonomy (syntax/tool/permission/dependency/assumption/test/env/network/
 /// edit-conflict/formatting) lands with the retry engine.
@@ -733,5 +763,24 @@ mod tests {
         assert_ne!(think, verify, "phases must render differently");
         assert!(think.contains("UNDERSTANDING"));
         assert!(verify.contains("VERIFYING"));
+    }
+
+    #[test]
+    fn truncate_tool_output_caps_huge_results() {
+        let big = "x".repeat(200_000);
+        let o = ToolOutcome {
+            call_id: "c1".into(),
+            name: "skills".into(),
+            output: big.clone(),
+            ok: true,
+            elapsed_ms: 1,
+        };
+        let capped = truncate_tool_output(&o, 50_000);
+        assert!(capped.len() < big.len(), "must be smaller than the raw output");
+        assert!(capped.contains("TRUNCATED"), "note present");
+        assert!(capped.contains("200000 chars"), "reports total size");
+        // Small outputs pass through untouched.
+        let small = ToolOutcome { call_id: "c2".into(), name: "echo".into(), output: "hello".into(), ok: true, elapsed_ms: 1 };
+        assert_eq!(truncate_tool_output(&small, 50_000), "hello");
     }
 }
