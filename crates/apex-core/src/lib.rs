@@ -1,6 +1,7 @@
 //! The ByteAi (APEX) agent core: loop, state machine, context budget, tool
 //! dispatch. Phase 1 keeps the loop lean; power modules attach later.
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -37,6 +38,87 @@ impl Phase {
             Phase::Complete => "COMPLETE",
             Phase::Blocked => "BLOCKED",
         }
+    }
+}
+
+/// Per-phase spinner sets: each phase gets its own icon + ASCII/braille frame
+/// set so the user can tell at a glance what the agent is doing (thinking,
+/// searching, writing, testing, recovering, reviewing).
+pub struct SpinStyle {
+    pub icon: &'static str,
+    pub frames: &'static [char],
+}
+
+pub fn spinner_for(phase: Phase) -> &'static SpinStyle {
+    match phase {
+        Phase::Understanding => &SpinStyle { icon: "⋯", frames: &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] },
+        Phase::Investigating => &SpinStyle { icon: "◎", frames: &['◐', '◓', '◑', '◒'] },
+        Phase::Implementing => &SpinStyle { icon: "✎", frames: &['▖', '▘', '▝', '▗'] },
+        Phase::Verifying => &SpinStyle { icon: "✓", frames: &['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'] },
+        Phase::Recovering => &SpinStyle { icon: "⚠", frames: &['♲', '✇', '♻'] },
+        Phase::Reviewing => &SpinStyle { icon: "✉", frames: &['▤', '▥', '▦', '▧'] },
+        Phase::Complete => &SpinStyle { icon: "✓", frames: &['●'] },
+        Phase::Blocked => &SpinStyle { icon: "✗", frames: &['●'] },
+    }
+}
+
+/// Live status shared between the agent core and any UI (TUI, REPL, remote).
+/// Updated by `Agent::run` on every phase change, iteration, and tool call so
+/// the UI can render a Hermes-style live activity line. `Arc<Mutex<..>>` so
+/// the UI reads it lock-free (try_lock) on every frame.
+#[derive(Debug, Clone)]
+pub struct LiveStatus {
+    pub phase: Phase,
+    /// Tools currently executing (set right before dispatch, cleared after).
+    pub active_tools: Vec<String>,
+    /// Iterations used this turn.
+    pub iterations: u32,
+    /// Per-turn iteration cap (0 = unlimited), for "iter N/cap" display.
+    pub iter_cap: u32,
+    /// Human-readable note for the current activity (e.g. exhaustion reason).
+    pub note: String,
+}
+
+impl Default for LiveStatus {
+    fn default() -> Self {
+        Self {
+            phase: Phase::Understanding,
+            active_tools: Vec::new(),
+            iterations: 0,
+            iter_cap: 0,
+            note: String::new(),
+        }
+    }
+}
+
+impl LiveStatus {
+    /// Render a single-line activity status (no elapsed — UI adds that).
+    pub fn line(&self, spinner_frame: usize) -> String {
+        let style = spinner_for(self.phase);
+        let sp = style.frames[(spinner_frame / 2) % style.frames.len().max(1)];
+        let tools = if self.active_tools.is_empty() {
+            "…".to_string()
+        } else {
+            self.active_tools.join(", ")
+        };
+        let cap = if self.iter_cap > 0 {
+            format!("/{}", self.iter_cap)
+        } else {
+            String::new()
+        };
+        let note = if self.note.is_empty() {
+            String::new()
+        } else {
+            format!("  ({})", self.note)
+        };
+        format!(
+            "{} {} {} {} · iter {}{cap}{note}",
+            style.icon,
+            sp,
+            self.phase.as_str(),
+            tools,
+            self.iterations
+        )
     }
 }
 
@@ -104,12 +186,35 @@ pub struct Agent {
     pub history: Vec<Message>,
     pub usage: Usage,
     pub phase: Phase,
+    /// Live activity status shared with any UI (TUI/REPL poll this on every
+    /// frame to render "what is the agent doing right now").
+    pub live: Arc<Mutex<LiveStatus>>,
     pub data_dir: std::path::PathBuf,
 }
 
 impl Agent {
     pub fn new(provider: Client, config: AgentConfig, tools: Registry, data_dir: std::path::PathBuf) -> Self {
-        Self { provider, config, tools, history: Vec::new(), usage: Usage::default(), phase: Phase::Understanding, data_dir }
+        let live = Arc::new(Mutex::new(LiveStatus {
+            phase: Phase::Understanding,
+            iter_cap: config.max_iterations,
+            ..LiveStatus::default()
+        }));
+        Self { provider, config, tools, history: Vec::new(), usage: Usage::default(), phase: Phase::Understanding, live, data_dir }
+    }
+
+    /// Set the execution phase in both `self.phase` and the live status.
+    fn set_phase(&mut self, p: Phase) {
+        self.phase = p;
+        if let Ok(mut l) = self.live.try_lock() {
+            l.phase = p;
+        }
+    }
+
+    /// Update the live status (iterations, active tools, note) from the core.
+    fn update_live(&self) {
+        if let Ok(mut l) = self.live.try_lock() {
+            l.phase = self.phase;
+        }
     }
 
     pub fn with_system_prompt(&mut self) {
@@ -180,7 +285,7 @@ impl Agent {
         // so the agent doesn't start each session from scratch.
         self.inject_memories(user_input);
         self.history.push(Message::user(user_input));
-        self.phase = Phase::Understanding;
+        self.set_phase(Phase::Understanding);
 
         let mut outcome = AgentOutcome::default();
         let mut tools_active = self.config.tools_enabled;
@@ -209,14 +314,20 @@ impl Agent {
                     warned = true;
                     self.history.push(Message::system(&format!(
                         "Interaction budget notice: you are near the {capped}-iteration cap \
-                         (about to use {}/{}). If you already have enough to answer, STOP \
-                         calling tools and give your final answer now.",
+                         (about to use {}/{}). Keep working — do NOT stop early — but \
+                         prefer to consolidate: if the remaining work is small, finish it \
+                         and give your final answer; otherwise continue calling tools.",
                         outcome.iterations + 1, capped
                     )));
                 }
             }
 
             outcome.iterations += 1;
+            if let Ok(mut l) = self.live.try_lock() {
+                l.iterations = outcome.iterations;
+                l.iter_cap = capped;
+                l.phase = self.phase;
+            }
             self.enforce_budget();
             let defs = if tools_active { self.tools.defs() } else { Vec::new() };
 
@@ -254,7 +365,7 @@ impl Agent {
                 Err(e) => {
                     // Failure recovery (spec §23): classify and report; no blind retry.
                     let reason = classify(&e);
-                    self.phase = Phase::Blocked;
+                    self.set_phase(Phase::Blocked);
                     outcome.finished = false;
                     outcome.blocked_reason = Some(format!("{reason}: {e:#}"));
                     // Keep the failed exchange out of history to allow a clean retry.
@@ -296,7 +407,7 @@ impl Agent {
                     None,
                     if reasoning.is_empty() { None } else { Some(reasoning) },
                 ));
-                self.phase = Phase::Complete;
+                self.set_phase(Phase::Complete);
                 outcome.final_text = content;
                 outcome.finished = true;
                 self.extract_memories(&outcome).await;
@@ -304,7 +415,7 @@ impl Agent {
             }
 
             // Tool round: dispatch all calls in parallel.
-            self.phase = Phase::Implementing;
+            self.set_phase(Phase::Implementing);
             outcome.tool_calls_made += valid_calls.len() as u32;
             self.history.push(Message::assistant(
                 if content.is_empty() { None } else { Some(content) },
@@ -315,6 +426,12 @@ impl Agent {
             let mut outcomes = Vec::with_capacity(valid_calls.len());
             for call in &valid_calls {
                 let tool = self.tools.get(&call.name);
+                // Live status: show the tool name WHILE it runs (the UI renders
+                // this on every frame — not just after the tool finishes).
+                if let Ok(mut l) = self.live.try_lock() {
+                    l.active_tools = vec![call.name.clone()];
+                    l.phase = Phase::Implementing;
+                }
                 let mut outcome = match tool {
                     Some(t) => {
                         let args: Value = serde_json::from_str(&call.arguments)
@@ -345,12 +462,16 @@ impl Agent {
                 debug!("tool {} -> ok={} {}ms", call.name, outcome.ok, outcome.elapsed_ms);
                 on_tool(&outcome);
                 outcomes.push(outcome);
+                // Clear the active-tool label so the status shows "…" again.
+                if let Ok(mut l) = self.live.try_lock() {
+                    l.active_tools.clear();
+                }
             }
 
             // If every tool failed with "unknown tool", disable tools to avoid a retry loop.
             if !outcomes.is_empty() && outcomes.iter().all(|o| !o.ok) && outcomes.iter().any(|o| o.output.contains("unknown tool")) {
                 tools_active = false;
-                self.phase = Phase::Recovering;
+                self.set_phase(Phase::Recovering);
             }
 
             for o in &outcomes {
@@ -358,11 +479,16 @@ impl Agent {
             }
         }
 
-        self.phase = Phase::Recovering;
+        self.set_phase(Phase::Recovering);
 
         // --- Graceful budget exhaustion (beyond Hermes: we still deliver a
         // real final answer from partial progress, and record WHY we stopped) ---
         let reason = exhaustion.unwrap_or_else(|| format!("iteration budget ({capped} iters)"));
+        // Surface WHY it stopped in the live status so the UI can show it.
+        if let Ok(mut l) = self.live.try_lock() {
+            l.phase = Phase::Recovering;
+            l.note = format!("stopped: {reason} — raise max_iterations in config (0 = unlimited)");
+        }
         self.history.push(Message::system(&format!(
             "Reached the {reason}. Do NOT call any tools. Provide your best final \
              answer now, summarizing what you found and completed so far."
@@ -388,7 +514,7 @@ impl Agent {
             Err(e) => {
                 // Drop the wrap-up system message so the history stays clean.
                 self.history.pop();
-                self.phase = Phase::Blocked;
+                self.set_phase(Phase::Blocked);
                 outcome.finished = false;
                 outcome.blocked_reason = Some(format!("{reason}: wrap-up failed: {e:#}"));
                 outcome.exhausted = true;
@@ -406,11 +532,11 @@ impl Agent {
                 None,
                 if reasoning.is_empty() { None } else { Some(reasoning) },
             ));
-            self.phase = Phase::Complete;
+            self.set_phase(Phase::Complete);
             outcome.final_text = content;
             outcome.finished = true;
         } else {
-            self.phase = Phase::Blocked;
+            self.set_phase(Phase::Blocked);
             outcome.finished = false;
             outcome.blocked_reason = Some(format!("{reason}: no final answer produced"));
         }
@@ -585,5 +711,27 @@ mod tests {
         let sys = agent.history[0].content.clone().unwrap_or_default();
         assert!(!sys.contains("Relevant prior knowledge"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn live_status_line_renders_phase_and_iterations() {
+        // Phase label + spinner frame + iteration count + cap.
+        let mut s = LiveStatus::default();
+        s.iterations = 3;
+        s.iter_cap = 20;
+        s.phase = Phase::Implementing;
+        s.active_tools = vec!["websearch".into()];
+        let line = s.line(0);
+        assert!(line.contains("IMPLEMENTING"), "line: {line}");
+        assert!(line.contains("websearch"), "line: {line}");
+        assert!(line.contains("3/20"), "line: {line}");
+        // Different phases render different icons (per-phase status style).
+        s.phase = Phase::Understanding;
+        let think = s.line(0);
+        s.phase = Phase::Verifying;
+        let verify = s.line(0);
+        assert_ne!(think, verify, "phases must render differently");
+        assert!(think.contains("UNDERSTANDING"));
+        assert!(verify.contains("VERIFYING"));
     }
 }

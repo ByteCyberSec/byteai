@@ -381,6 +381,26 @@ async fn models() -> Result<()> {
 }
 
 async fn run_turn(agent: &mut Agent, prompt: &str) -> Result<apex_types::AgentOutcome> {
+    // Live status poller (Hermes-style): while the turn runs, print the
+    // current activity (phase + active tool + iterations) to stderr so the
+    // user sees what the agent is doing without corrupting the stdout stream.
+    let live = agent.live.clone();
+    let (stop_tx, mut stop_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let poller = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = stop_rx.recv() => break,
+                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                    if let Ok(l) = live.try_lock() {
+                        if l.iterations > 0 || !l.active_tools.is_empty() {
+                            eprint!("\r  {} \x1b[K", l.line(0));
+                        }
+                    }
+                }
+            }
+        }
+        eprint!("\r\x1b[K");
+    });
     let mut text_sink = |t: &str| print!("{t}");
     let mut tool_sink = |o: &ToolOutcome| {
         let preview: String = o.output.chars().take(90).collect();
@@ -389,6 +409,8 @@ async fn run_turn(agent: &mut Agent, prompt: &str) -> Result<apex_types::AgentOu
         println!("  [tool] {} {} — {} ({} ms)", o.name, if o.ok { "✓" } else { "✗" }, preview, o.elapsed_ms);
     };
     let outcome = agent.run(prompt, &mut text_sink, &mut tool_sink).await?;
+    let _ = stop_tx.send(()).await;
+    let _ = poller.await;
     println!();
     Ok(outcome)
 }

@@ -24,7 +24,6 @@ use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use ratatui::{Frame, Terminal};
 
 const MAX_LOG: usize = 3000;
-const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /// All supported /commands (name, description). Used by the command palette
 /// that appears when the user types `/`.
@@ -112,6 +111,9 @@ struct App {
     /// Channel for auto-review results (non-blocking, spawned per heavy turn).
     review_rx: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
     review_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    /// Live activity status (phase, active tools, iteration progress) shared
+    /// with the agent core — polled every frame for the Hermes-style status line.
+    live: Option<Arc<std::sync::Mutex<apex_core::LiveStatus>>>,
     /// The most recent completed turn outcome (consumed by run_loop for
     /// exhaustion notices + auto-review triggering).
     last_outcome: Option<apex_types::AgentOutcome>,
@@ -171,6 +173,7 @@ impl App {
             turn_rx: None,
             review_rx: Some(review_rx),
             review_tx,
+            live: None,
             last_outcome: None,
             busy: false,
             busy_since: None,
@@ -398,6 +401,8 @@ pub async fn run() -> anyhow::Result<()> {
 
     let mut app = App::new(model.clone(), provider.name.clone(), tools_count);
     app.iter_cap = cfg.agent.max_iterations;
+    // Share the agent's live status so the UI renders what the agent is doing.
+    app.live = Some(agent.lock().await.live.clone());
     // Warm the model list for Ctrl+Tab switching (best-effort, no block).
     if let Ok(ids) = agent.lock().await.provider.list_models().await {
         if let Some(pos) = ids.iter().position(|m| m == &model) {
@@ -1783,9 +1788,18 @@ fn draw(f: &mut Frame, app: &mut App) {
 
 fn draw_header(f: &mut Frame, area: Rect, app: &mut App) {
     let busy = if app.busy {
-        let sp = SPINNER[(app.spinner_frame / 2) % SPINNER.len()];
         let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(0);
-        format!(" {sp} {secs}s")
+        // Read the live status (phase, active tool, iterations) from the
+        // agent core — try_lock so we never block the UI.
+        let live_line = match app.live.as_ref().and_then(|l| l.try_lock().ok()) {
+            Some(l) => l.line(app.spinner_frame),
+            None => String::new(),
+        };
+        if live_line.is_empty() {
+            format!(" ~ {secs}s")
+        } else {
+            format!(" {live_line} · {secs}s")
+        }
     } else {
         String::new()
     };
@@ -1848,14 +1862,23 @@ fn draw_chat(f: &mut Frame, area: Rect, app: &mut App) {
         }
     }
 
-    // Spinner + elapsed seconds appear right in the chat while the agent is
-    // working, so the user sees activity at the answer point (jcode-style).
+    // Spinner + live activity status appear right in the chat while the agent
+    // is working, so the user sees exactly what it is doing at the answer
+    // point (Hermes-style): phase-specific icon + spinner + active tool.
     if app.busy {
-        let sp = SPINNER[(app.spinner_frame / 2) % SPINNER.len()];
         let secs = app.busy_since.map(|t| t.elapsed().as_secs()).unwrap_or(0);
+        let live_line = match app.live.as_ref().and_then(|l| l.try_lock().ok()) {
+            Some(l) => l.line(app.spinner_frame),
+            None => String::new(),
+        };
+        let label = if live_line.is_empty() {
+            format!("{secs}s working…")
+        } else {
+            format!("{live_line} · {secs}s")
+        };
         lines.push(Line::from(vec![
-            Span::styled(format!(" {sp} "), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{secs}s working…"), Style::default().fg(Color::Yellow)),
+            Span::styled("  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(label, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         ]));
     }
 

@@ -13,7 +13,7 @@ pub struct Config {
     pub providers: Vec<ProviderEntry>,
 }
 
-fn default_max_iterations() -> u32 { 150 }
+fn default_max_iterations() -> u32 { 300 }
 fn default_delegation_max_iterations() -> Option<u32> { Some(250) }
 fn default_warn_ratio() -> f32 { 0.8 }
 fn default_true() -> bool { true }
