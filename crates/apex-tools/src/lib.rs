@@ -31,6 +31,8 @@ pub mod schedule;
 mod workflow;
 mod improve;
 mod gates;
+mod ideas;
+mod github;
 pub mod note;
 pub mod read;
 pub mod search;
@@ -153,6 +155,8 @@ impl Registry {
         r.register(Arc::new(workflow::WorkflowTool::new(ctx.data_dir.clone())));
         r.register(Arc::new(improve::ImproveTool::new(ctx.clone())));
         r.register(Arc::new(gates::GatesTool));
+        r.register(Arc::new(ideas::IdeasTool::new(ctx.clone())));
+        r.register(Arc::new(github::GithubTool::new(ctx.clone())));
         r
     }
 }

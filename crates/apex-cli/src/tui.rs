@@ -55,6 +55,8 @@ const COMMANDS: &[(&str, &str)] = &[
     ("council", "multi-model deliberation vote"),
     ("govern", "constitutional guardrail check"),
     ("gates", "acceptance ledger: status/run/reverify/create"),
+    ("ideas", "evidence-based idea discovery: /ideas <focus>"),
+    ("github", "capability discovery: /github <target> <query>"),
     ("subagent", "spawn parallel subagents"),
     ("swarm", "spawn 3-way swarm"),
     ("quit", "exit"),
@@ -1104,6 +1106,12 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
             app.add_assistant("/gates          — acceptance ledger (asks for the ledger)");
             app.add_assistant("/subagent       — spawn parallel subagents (asks for the goal)");
             app.add_assistant("/swarm          — spawn 3-way swarm (asks for the goal)");
+            app.add_assistant("┌─ Intelligence");
+            app.add_assistant("/ideas [focus]  — discover top product ideas from real internet problems");
+            app.add_assistant("                 (/ideas research <idea> · /ideas build <idea> · /ideas status)");
+            app.add_assistant("/github        — discover+score the best skills/tools/harnesses/mcp");
+            app.add_assistant("                 (/github skills <cap> · /github harnesses <cap> · /github improve");
+            app.add_assistant("                  /github current · /github evaluate <owner/repo> · /github memory · /github graph)");
             app.add_assistant("┌─ Other");
             app.add_assistant("/copy           — copy last response to clipboard");
             app.add_assistant("/diff           — git working-tree summary");
@@ -1648,6 +1656,59 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                 None => app.add_error("govern tool not available"),
             }
         }
+        "ideas" => {
+            let focus = parts.get(1..).unwrap_or(&[]).join(" ");
+            if focus.is_empty() {
+                app.pending_cmd = Some("ideas".to_string());
+                app.pending_label = Some("ideas <focus> — e.g. AI, SaaS, developer tools, or a custom search".to_string());
+                app.add_meta("  /ideas — type a category or custom search, then Enter (Esc cancels)");
+                return;
+            }
+            let action = if focus == "menu" || focus == "help" { "menu" }
+                else if focus.starts_with("research") { "research" }
+                else if focus.starts_with("build") { "build" }
+                else if focus == "status" { "status" }
+                else { "discover" };
+            let query = if action == "discover" { focus.clone() }
+                else { focus.splitn(2, ' ').nth(1).unwrap_or("").to_string() };
+            let g = agent.lock().await;
+            let tool = g.tools.get("ideas");
+            drop(g);
+            match tool {
+                Some(tool) => {
+                    let args = serde_json::json!({"action": action, "focus": query});
+                    let outcome = tool.execute(args).await;
+                    app.add_tool_card(&outcome.name, outcome.ok, outcome.elapsed_ms, &outcome.output);
+                }
+                None => app.add_error("ideas tool not available"),
+            }
+        }
+        "github" => {
+            let rest = parts.get(1..).unwrap_or(&[]).join(" ");
+            if rest.is_empty() {
+                app.pending_cmd = Some("github".to_string());
+                app.pending_label = Some("github <skills|harnesses|tools|mcp|improve|current|evaluate repo|search ...>".to_string());
+                app.add_meta("  /github — type a target + query, then Enter (Esc cancels)");
+                return;
+            }
+            let first = parts.get(1).copied().unwrap_or("").to_string();
+            let action = match first.as_str() {
+                "menu"|"search"|"evaluate"|"improve"|"current"|"memory"|"graph" => first.clone(),
+                _ => "search".to_string(),
+            };
+            let query = rest.clone();
+            let g = agent.lock().await;
+            let tool = g.tools.get("github");
+            drop(g);
+            match tool {
+                Some(tool) => {
+                    let args = serde_json::json!({"action": action, "target": first, "query": query});
+                    let outcome = tool.execute(args).await;
+                    app.add_tool_card(&outcome.name, outcome.ok, outcome.elapsed_ms, &outcome.output);
+                }
+                None => app.add_error("github tool not available"),
+            }
+        }
         other => {
             app.add_error(&format!("unknown command /{other} — try /help"));
         }
@@ -1998,7 +2059,8 @@ mod tests {
             "model", "provider", "addprovider", "reload", "tools",
             "clear", "save", "usage", "session", "resume", "config", "keys",
             "version", "copy", "diff",
-            "subagent", "swarm", "route", "council", "govern", "gates", "quit",
+            "subagent", "swarm", "route", "council", "govern", "gates",
+            "ideas", "github", "quit",
         ];
         for (name, _) in COMMANDS {
             assert!(handled.contains(name), "palette command /{name} has no handler");

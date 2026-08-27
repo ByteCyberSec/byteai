@@ -82,9 +82,37 @@ model = "deepseek-v4-flash"
 - [x] Phase 8 — Smart router (capability-based model routing + learning)
 - [x] Phase 9 — Reviewer (independent verification agent)
 - [x] Phase 10 — Polish (TUI, agent hub, plugins, MCP, remote execution)
+- [x] Phase 11 — Intelligence engine (`/Ideas` + `/Github` first-class commands:
+      evidence-based idea discovery, compatibility-engine repository evaluation
+      (ADOPT/ADAPT/LEARN FROM/REJECT), skill/harness discovery, capability graph,
+      GitHub intelligence memory — see `docs/apex-intelligence.md`)
 - [x] Acceptance gates (`gates` tool — unlazy-style GATES.md ledgers: status/run/reverify/create; completion proven by CHECK+EXPECT evidence, not declaration; parent re-verification via `gates reverify` after `spawn`)
 
 Every phase ends with a benchmark run (`benchmarks/`).
+
+## /Ideas and /Github
+
+Two first-class commands (in the TUI palette and the REPL) implement the APEX
+intelligence engine — see `docs/apex-intelligence.md` for the full doctrine.
+
+```
+/ideas <focus>                    — mine real internet problems, return the Top 5
+                                     opportunities with ByteAI Opportunity Scores
+/ideas research <idea>            — deep-research one idea before building
+/ideas build <idea>               — produce a spec + phase-by-phase build plan
+/ideas menu | status              — show the category menu / saved ideas
+
+/github <target> <query>          — discover + compatibility-score candidates
+                                     (skills | harnesses | tools | mcp | ...)
+/github improve [focus]           — rank improvements to ByteAI itself
+/github current                   — analyze the current project's capability gaps
+/github evaluate <owner/repo>     — evaluate one repository (APEX / project scores)
+/github memory | graph            — GitHub intelligence memory / capability graph
+```
+
+Both commands reuse ByteAI's existing capabilities (websearch, fetch, provider,
+memory, skills) and persist every finding under `<data>/intelligence/` and the
+project-local `.apex/intelligence/` directory.
 
 ## License
 

@@ -439,6 +439,13 @@ async fn repl(agent: &mut Agent) -> Result<()> {
                     println!("/model <name>   — show or switch model (e.g. /model deepseek-v4-flash)");
                     println!("/provider <name> — show or switch provider (e.g. /provider omniroute)");
                     println!("/tools          — list available tools");
+                    println!("/route <type> <task> — route a task to the best model");
+                    println!("/council <question>  — multi-model deliberation vote");
+                    println!("/govern <action>    — constitutional guardrail check");
+                    println!("/ideas [focus]  — discover top product ideas from real problems");
+                    println!("                  (/ideas menu · /ideas research <idea> · /ideas build <idea>)");
+                    println!("/github [target query] — discover+score skills/tools/harnesses/mcp");
+                    println!("                  (/github skills <cap> · /github improve · /github current)");
                     println!("/save <name>    — save this session");
                     println!("/usage          — show token usage");
                     println!("/clear          — clear conversation history");
@@ -573,6 +580,50 @@ async fn repl(agent: &mut Agent) -> Result<()> {
                                 println!("[govern] {}", outcome.output);
                             }
                             None => println!("[govern tool not available]"),
+                        }
+                    }
+                }
+                "ideas" => {
+                    let focus = cmd.split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
+                    if focus.is_empty() {
+                        println!("[usage: /ideas <focus> — e.g. AI + SaaS, developer tools, healthcare automation]");
+                        println!("        /ideas menu · /ideas research <idea> · /ideas build <idea> · /ideas status");
+                    } else {
+                        let action = if focus == "menu" || focus == "help" { "menu" }
+                            else if focus.starts_with("research") { "research" }
+                            else if focus.starts_with("build") { "build" }
+                            else if focus == "status" { "status" }
+                            else { "discover" };
+                        let query = if action == "discover" { focus.clone() }
+                            else { focus.splitn(2, ' ').nth(1).unwrap_or("").to_string() };
+                        let args = serde_json::json!({"action": action, "focus": query});
+                        match agent.tools.get("ideas") {
+                            Some(t) => {
+                                let outcome = t.execute(args).await;
+                                println!("[ideas] {}", outcome.output);
+                            }
+                            None => println!("[ideas tool not available]"),
+                        }
+                    }
+                }
+                "github" => {
+                    let rest = cmd.split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
+                    if rest.is_empty() {
+                        println!("[usage: /github <skills|harnesses|tools|mcp|improve|current|evaluate repo|search ...>]");
+                        println!("        /github menu");
+                    } else {
+                        let first = cmd.split_whitespace().nth(1).unwrap_or("").to_string();
+                        let action = match first.as_str() {
+                            "menu"|"search"|"evaluate"|"improve"|"current"|"memory"|"graph" => first.clone(),
+                            _ => "search".to_string(),
+                        };
+                        let args = serde_json::json!({"action": action, "target": first, "query": rest});
+                        match agent.tools.get("github") {
+                            Some(t) => {
+                                let outcome = t.execute(args).await;
+                                println!("[github] {}", outcome.output);
+                            }
+                            None => println!("[github tool not available]"),
                         }
                     }
                 }
