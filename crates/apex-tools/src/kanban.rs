@@ -207,7 +207,9 @@ impl Tool for KanbanTool {
                         let mut removed = false;
                         if let Some(cards) = b["cards"].as_object_mut() {
                             for map in cards.values_mut() {
-                                if map.as_object_mut().unwrap().remove(&id).is_some() {
+                                // `map` may be a non-object if the board JSON
+                                // is hand-edited/corrupt — don't panic, skip.
+                                if map.as_object_mut().and_then(|m| m.remove(&id)).is_some() {
                                     removed = true;
                                     break;
                                 }
