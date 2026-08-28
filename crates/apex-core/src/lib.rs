@@ -150,6 +150,12 @@ pub struct AgentConfig {
     /// provider window, stalling the turn. We truncate with a clear note and
     /// keep a compact head/tail so the model still sees what happened.
     pub max_tool_output_chars: usize,
+    /// Auto-continue: when the model stops with no tool calls but the task
+    /// isn't actually finished (it often emits a partial summary mid-task),
+    /// run one cheap completion probe and, if the model says CONTINUE, feed
+    /// a nudge back into history and keep looping (bounded by max_iterations
+    /// and a stuck-loop guard). Disable to restore strict stop-on-first-text.
+    pub auto_continue: bool,
 }
 
 impl Default for AgentConfig {
@@ -164,6 +170,7 @@ impl Default for AgentConfig {
             run_budget_seconds: None,
             warn_ratio: 0.8,
             max_tool_output_chars: 50_000,
+            auto_continue: true,
         }
     }
 }
@@ -174,6 +181,12 @@ pub const SYSTEM_PROMPT: &str = r#"You are ByteAi (codename APEX), an autonomous
 Working style: UNDERSTAND → INVESTIGATE → IMPLEMENT → TEST → VERIFY → REPORT.
 Use tools (shell, read, search, edit, websearch, fetch, todo, note, memory) whenever they reduce guesswork.
 Read files before editing them. Search before assuming. Use websearch+fetch for real-time web info. Run commands to verify.
+
+Task completion: when the user gives a task, DO NOT stop or summarize partway. Keep calling tools
+until EVERY part of the request is implemented, tested, and verified. A response with no tool
+calls is only acceptable when the entire task is truly complete — or you are genuinely blocked
+(missing information, impossible request), in which case say exactly what you need and stop.
+Do not pause after each step expecting approval; work autonomously to the finish.
 
 Reporting rules:
 - Final answer structure: 1) What changed  2) Verification  3) Blockers/risks  4) Next action.
@@ -214,6 +227,31 @@ impl Agent {
         self.phase = p;
         if let Ok(mut l) = self.live.try_lock() {
             l.phase = p;
+        }
+    }
+
+    /// One cheap completion probe (auto-continue). The model just emitted a
+    /// no-tool response; ask it whether the ORIGINAL task is truly finished.
+    /// Returns true = DONE (complete the turn), false = CONTINUE (keep
+    /// working). A probe failure returns true so the turn never hangs on a
+    /// meta-call — we only auto-continue when the model explicitly confirms
+    /// there is more work.
+    async fn check_done(&self, last_output: &str) -> bool {
+        let prompt = format!(
+            "You are the completion gate for a multi-step task. The agent's latest \
+             response contained NO tool calls. It was:\n\n{last_output}\n\n\
+             Is the ORIGINAL user task fully complete — every part implemented and \
+             verified — or is the agent stopping early with work still remaining? \
+             Reply with EXACTLY one word: DONE or CONTINUE."
+        );
+        let msg = Message::user(&prompt);
+        match self
+            .provider
+            .chat(&self.config.model, &[msg], &[], Some(8))
+            .await
+        {
+            Ok((text, _, _)) => is_done_verdict(&text),
+            Err(_) => true, // probe failed: treat as done, never hang
         }
     }
 
@@ -299,6 +337,11 @@ impl Agent {
         let capped = self.config.max_iterations;
         let wall = self.config.run_budget_seconds;
         let mut warned = false;
+        // Auto-continue guard: how many consecutive no-tool responses the
+        // model has produced while claiming "not done yet". If it claims
+        // CONTINUE 3 times in a row without making progress, it's stuck —
+        // force a clean wrap-up instead of burning the iteration budget.
+        let mut no_tool_streak: u32 = 0;
         let exhaustion: Option<String>;
 
         loop {
@@ -438,6 +481,34 @@ impl Agent {
                 .collect();
 
             if valid_calls.is_empty() {
+                // --- Auto-continue: a bare no-tool response is NOT proof the
+                // task is done. Models frequently pause mid-task with a
+                // partial summary ("Let me refine X…", a heading, a TODO).
+                // Probe once, cheaply, and if the model itself says the task
+                // is unfinished, feed a "keep working" nudge into history and
+                // loop again — so ByteAI never waits for a human "continue".
+                if self.config.auto_continue
+                    && outcome.tool_calls_made > 0
+                    && !content.trim().is_empty()
+                    && no_tool_streak < 3
+                    && !self.check_done(&content).await
+                {
+                    no_tool_streak += 1;
+                    self.history.push(Message::assistant(
+                        Some(content.clone()),
+                        None,
+                        if reasoning.is_empty() { None } else { Some(reasoning.clone()) },
+                    ));
+                    self.history.push(Message::system(
+                        "The task is NOT complete yet. Continue working — keep calling \
+                         tools until every part of the original request is implemented and \
+                         verified. Do NOT summarize or stop early. If you are genuinely \
+                         blocked (missing information, impossible request), state the \
+                         blocker clearly in one sentence and stop.",
+                    ));
+                    self.set_phase(Phase::Investigating);
+                    continue;
+                }
                 // Normal completion.
                 self.history.push(Message::assistant(
                     if content.is_empty() { None } else { Some(content.clone()) },
@@ -450,6 +521,10 @@ impl Agent {
                 self.extract_memories(&outcome).await;
                 return Ok(outcome);
             }
+
+            // The model made tool calls: it's making progress — reset the
+            // no-tool streak so only CONSECUTIVE stalls count.
+            no_tool_streak = 0;
 
             // Tool round: dispatch all calls in parallel.
             self.set_phase(Phase::Implementing);
@@ -712,6 +787,19 @@ pub fn classify(e: &anyhow::Error) -> &'static str {
     }
 }
 
+/// Parse the completion-gate verdict: `true` = DONE (finish the turn),
+/// `false` = CONTINUE (keep working). Reads only the FIRST word so trailing
+/// reasoning or the "NOT DONE…" phrasing can't confuse it.
+fn is_done_verdict(text: &str) -> bool {
+    let first = text
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_matches(|c: char| !c.is_ascii_alphabetic())
+        .to_uppercase();
+    first == "DONE"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -906,6 +994,32 @@ mod tests {
         assert_eq!(users, 1, "dangling user msg replaced, not duplicated");
         assert!(matches!(agent.history.last(), Some(Message { role: Role::User, .. })));
         assert_eq!(agent.history.last().unwrap().content.as_deref(), Some("continue"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn done_verdict_parses_first_word_only() {
+        // The completion gate must treat only a leading DONE as completion;
+        // reasoning, "NOT DONE", or anything else means CONTINUE.
+        assert!(is_done_verdict("DONE"));
+        assert!(is_done_verdict("DONE the task is complete"));
+        assert!(is_done_verdict("  done. "));
+        assert!(!is_done_verdict("CONTINUE"));
+        assert!(!is_done_verdict("CONTINUE: 3 fixes remain"));
+        assert!(!is_done_verdict("NOT DONE"));
+        assert!(!is_done_verdict("not done yet"));
+        assert!(!is_done_verdict(""));
+        assert!(!is_done_verdict("Still working on the kanban fix"));
+    }
+
+    #[tokio::test]
+    async fn check_done_probe_failure_treats_as_done() {
+        // The probe targets an unreachable provider, so it must fall back to
+        // "done" and NEVER hang the turn on a meta-call.
+        let dir = tmp_dir("check_done_fail");
+        let agent = make_agent(&dir); // Client points at 127.0.0.1:1
+        let result = agent.check_done("some partial output").await;
+        assert!(result, "probe failure must not block the turn");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

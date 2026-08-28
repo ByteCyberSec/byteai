@@ -391,6 +391,7 @@ pub async fn run() -> anyhow::Result<()> {
         run_budget_seconds: cfg.agent.run_budget_seconds.filter(|&b| b > 0),
         warn_ratio: cfg.agent.budget_warn_ratio,
         tool_timeout: std::time::Duration::from_secs(cfg.agent.tool_timeout_seconds.unwrap_or(300)),
+        auto_continue: cfg.agent.auto_continue,
         ..Default::default()
     };
     let agent = Arc::new(tokio::sync::Mutex::new(Agent::new(client, agent_cfg, tools, data_dir.clone())));

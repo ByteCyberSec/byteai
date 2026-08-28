@@ -53,6 +53,11 @@ pub struct AgentSection {
     /// Minimum iterations in a turn to trigger auto-review.
     #[serde(default = "default_auto_min_iters")]
     pub auto_review_min_iters: u32,
+    /// Auto-continue: when the model stops with a no-tool response before the
+    /// task is truly finished, probe it once and keep working if it says
+    /// CONTINUE — never wait for a human "continue" mid-task.
+    #[serde(default = "default_true")]
+    pub auto_continue: bool,
 }
 
 impl Default for AgentSection {
@@ -68,6 +73,7 @@ impl Default for AgentSection {
             auto_review_enabled: default_true(),
             auto_review_min_tools: default_auto_min_tools(),
             auto_review_min_iters: default_auto_min_iters(),
+            auto_continue: default_true(),
         }
     }
 }

@@ -134,10 +134,12 @@ impl Tool for SecretsTool {
 
 /// Mask most of the value for the confirm message so it's not echoed verbatim.
 fn mask_value(v: &str) -> String {
-    if v.len() <= 4 {
+    // Use char (not byte) indexing: `&v[v.len()-4..]` panics when the last 4
+    // bytes land mid-codepoint (e.g. "a€€€" = 7 bytes / 4 chars).
+    if v.chars().count() <= 4 {
         "••••".to_string()
     } else {
-        let tail = &v[v.len() - 4..];
+        let tail: String = v.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
         format!("••••{tail}")
     }
 }

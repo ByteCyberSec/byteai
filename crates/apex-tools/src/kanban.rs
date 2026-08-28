@@ -168,12 +168,15 @@ impl Tool for KanbanTool {
                         } else {
                             col.clone()
                         };
-                        let cards = b["cards"].as_object_mut().unwrap();
                         let mut found: Option<(String, Value)> = None;
-                        for (from_col, map) in cards.iter_mut() {
-                            if let Some(c) = map.as_object_mut().unwrap().remove(&id) {
-                                found = Some((from_col.clone(), c));
-                                break;
+                        if let Some(cards) = b["cards"].as_object_mut() {
+                            for (from_col, map) in cards.iter_mut() {
+                                // `map` may be a non-object if the board JSON is
+                                // hand-edited/corrupt — don't panic, just skip.
+                                if let Some(c) = map.as_object_mut().and_then(|m| m.remove(&id)) {
+                                    found = Some((from_col.clone(), c));
+                                    break;
+                                }
                             }
                         }
                         match found {

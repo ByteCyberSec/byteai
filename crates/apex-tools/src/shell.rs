@@ -98,8 +98,54 @@ pub fn cap(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        let mut t = s[..max].to_string();
+        // floor_char_boundary keeps the cut on a UTF-8 char boundary so we
+        // never panic slicing mid-codepoint when the cap lands inside a
+        // multi-byte character (e.g. CJK/emoji in stdout).
+        let cut = s.floor_char_boundary(max);
+        let mut t = s[..cut].to_string();
         t.push_str(&format!("\n… [truncated {} bytes]", s.len() - max));
         t
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cap_ascii_truncates() {
+        let s = "a".repeat(200);
+        let c = cap(&s, 100);
+        assert!(c.contains("truncated 100 bytes"));
+        assert!(c.len() < s.len());
+    }
+
+    #[test]
+    fn cap_passes_through_small_input() {
+        assert_eq!(cap("hello", 96 * 1024), "hello");
+    }
+
+    #[test]
+    fn cap_mid_multibyte_char_does_not_panic() {
+        // 96KiB cap boundary lands exactly inside a multi-byte char: the
+        // old `s[..max]` panicked here; floor_char_boundary must not.
+        let max = OUTPUT_CAP;
+        let mut s = String::new();
+        s.push_str(&"a".repeat(max - 1));
+        s.push('€'); // 3 bytes in UTF-8 (E2 82 AC), starts at byte max-1
+        let c = cap(&s, max);
+        // cap() keeps everything before the char that straddles the cut —
+        // exactly `floor_char_boundary(max)` bytes, never a mid-char slice.
+        let keep = s.floor_char_boundary(max);
+        assert_eq!(c, format!("{}\n… [truncated 2 bytes]", &s[..keep]), "keeps all complete chars before the cut");
+    }
+
+    #[test]
+    fn cap_cjk_and_emoji() {
+        let s = "日本語のテキストです。🚀".repeat(20_000);
+        let c = cap(&s, OUTPUT_CAP);
+        assert!(c.len() < s.len());
+        // Result must be valid UTF-8 (no mid-char slice).
+        assert!(c.is_char_boundary(c.len()));
     }
 }

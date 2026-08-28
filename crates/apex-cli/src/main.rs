@@ -245,6 +245,7 @@ fn build_agent(
         warn_ratio: cfg.agent.budget_warn_ratio,
         tool_timeout: std::time::Duration::from_secs(cfg.agent.tool_timeout_seconds.unwrap_or(300)),
         tools_enabled: !no_tools,
+        auto_continue: cfg.agent.auto_continue,
         ..AgentConfig::default()
     };
     let data_dir = config::data_dir();
