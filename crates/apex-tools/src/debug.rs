@@ -114,11 +114,10 @@ impl Tool for DebugTool {
                             Some(reason) => {
                                 let mut out = format!("Launched; stopped: {reason}\n");
                                 let threads = session.threads().await.unwrap_or_default();
-                                if let Some(t) = threads.first() {
-                                    if let Ok(frames) = session.stack_trace(*t, 8).await {
+                                if let Some(t) = threads.first()
+                                    && let Ok(frames) = session.stack_trace(*t, 8).await {
                                         out.push_str(&format_stack(&frames));
                                     }
-                                }
                                 out
                             }
                             None => "Launched; program ran to completion (no stop event).".to_string(),
@@ -188,15 +187,14 @@ impl Tool for DebugTool {
                                     let name = sc.get("name").and_then(|n| n.as_str()).unwrap_or("scope");
                                     let vr = sc.get("variablesReference").and_then(|v| v.as_u64()).unwrap_or(0);
                                     out.push_str(&format!("[{name}]\n"));
-                                    if vr > 0 {
-                                        if let Ok(vars) = session.variables(vr).await {
+                                    if vr > 0
+                                        && let Ok(vars) = session.variables(vr).await {
                                             for v in vars.iter().take(30) {
                                                 let vn = v.get("name").and_then(|x| x.as_str()).unwrap_or("?");
                                                 let vv = v.get("value").and_then(|x| x.as_str()).unwrap_or("?");
                                                 out.push_str(&format!("  {vn} = {vv}\n"));
                                             }
                                         }
-                                    }
                                 }
                                 if out.is_empty() { "No scopes".into() } else { out }
                             }
@@ -228,7 +226,7 @@ impl Tool for DebugTool {
 fn format_stack(frames: &[apex_dap::StackFrame]) -> String {
     let mut out = String::new();
     for (i, f) in frames.iter().enumerate() {
-        let src = f.source.split('/').last().unwrap_or(&f.source);
+        let src = f.source.split('/').next_back().unwrap_or(&f.source);
         out.push_str(&format!("  #{i} {:<28} {}:{}\n", f.name, src, f.line));
     }
     if frames.is_empty() {

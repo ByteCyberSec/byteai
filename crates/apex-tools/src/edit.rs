@@ -137,12 +137,12 @@ Never silently rewrite a file: whole-file requires explicit strategy=whole.".int
             out.push_str(&format!("Before:\n{}\nAfter:\n{}", preview(&old, 200), preview(&new, 200)));
 
             // ── LSP validation (optional, best-effort) ────────────────────────
-            if validate {
-                if let Some(registry) = &lsp {
+            if validate
+                && let Some(registry) = &lsp {
                     let p = PathBuf::from(&path);
                     let lang = apex_lsp::language_for_path(&p);
-                    if let Some(lang) = lang {
-                        if registry.supports(&lang) {
+                    if let Some(lang) = lang
+                        && registry.supports(&lang) {
                             match lsp_diag(registry, &p, &new_text, &lang).await {
                                 Ok(diags) => {
                                     let n_err = diags.iter().filter(|d| d.severity == Some(1)).count();
@@ -162,9 +162,7 @@ Never silently rewrite a file: whole-file requires explicit strategy=whole.".int
                                 Err(e) => out.push_str(&format!("\nLSP validation skipped: {e:#}")),
                             }
                         }
-                    }
                 }
-            }
 
             ok_outcome("", "edit", out, started.elapsed().as_millis() as u64)
         })
@@ -177,7 +175,7 @@ Never silently rewrite a file: whole-file requires explicit strategy=whole.".int
 fn contextual_replace(text: &str, old: &str, new: &str, allow_multiple: bool) -> Result<(String, usize), String> {
     let norm = |s: &str| -> String {
         s.lines()
-            .map(|l| l.trim().split_whitespace().collect::<Vec<_>>().join(" "))
+            .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
             .collect::<Vec<_>>()
             .join("\n")
     };

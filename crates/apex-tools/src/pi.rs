@@ -49,34 +49,6 @@ impl PiTool {
     pub fn new(data_dir: PathBuf) -> Self {
         Self { data_dir }
     }
-
-    fn manifest_path(&self) -> PathBuf {
-        self.data_dir.join("pi").join("manifest.json")
-    }
-
-    fn load_manifest(&self) -> PiManifest {
-        let p = self.manifest_path();
-        std::fs::read_to_string(&p)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
-    }
-
-    fn save_manifest(&self, m: &PiManifest) {
-        let p = self.manifest_path();
-        if let Some(dir) = p.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if let Ok(s) = serde_json::to_string_pretty(m) {
-            let _ = std::fs::write(&p, &s);
-        }
-    }
-
-    fn pkg_dir(&self, name: &str) -> PathBuf {
-        // Sanitize: replace @ and / with _
-        let safe = name.replace('@', "").replace('/', "_");
-        self.data_dir.join("pi").join("packages").join(safe)
-    }
 }
 
 impl Tool for PiTool {
@@ -182,42 +154,36 @@ impl Tool for PiTool {
                             let safe = pkg.name.replace('@', "").replace('/', "_");
                             data_dir.join("pi").join("packages").join(&safe)
                         };
-                        if pkg_dir.join("package.json").exists() {
-                            if let Ok(pkg_json) = std::fs::read_to_string(pkg_dir.join("package.json")) {
-                                if let Ok(v) = serde_json::from_str::<Value>(&pkg_json) {
+                        if pkg_dir.join("package.json").exists()
+                            && let Ok(pkg_json) = std::fs::read_to_string(pkg_dir.join("package.json"))
+                                && let Ok(v) = serde_json::from_str::<Value>(&pkg_json) {
                                     let manifest = v.get("pi");
                                     // Scan for extensions and generate bridge
-                                    if let Some(pi) = manifest {
-                                        if let Some(exts) = pi.get("extensions").and_then(|e| e.as_array()) {
+                                    if let Some(pi) = manifest
+                                        && let Some(exts) = pi.get("extensions").and_then(|e| e.as_array()) {
                                             for ext in exts {
-                                                if let Some(ext_path) = ext.as_str() {
-                                                    if generate_bridge(&data_dir, &pkg.name, &pkg_dir, ext_path).await {
+                                                if let Some(ext_path) = ext.as_str()
+                                                    && generate_bridge(&data_dir, &pkg.name, &pkg_dir, ext_path).await {
                                                         count += 1;
                                                     }
-                                                }
                                             }
                                         }
-                                    }
                                     // Fallback: scan conventional dirs
                                     if manifest.is_none() {
                                         // Check for conventional extensions/ directory
                                         let ext_dir = pkg_dir.join("extensions");
-                                        if ext_dir.is_dir() {
-                                            if let Ok(entries) = std::fs::read_dir(&ext_dir) {
+                                        if ext_dir.is_dir()
+                                            && let Ok(entries) = std::fs::read_dir(&ext_dir) {
                                                 for e in entries.flatten() {
                                                     let p = e.path();
-                                                    if p.extension().map(|s| s == "ts" || s == "js").unwrap_or(false) {
-                                                        if generate_bridge(&data_dir, &pkg.name, &pkg_dir, &p.to_string_lossy()).await {
+                                                    if p.extension().map(|s| s == "ts" || s == "js").unwrap_or(false)
+                                                        && generate_bridge(&data_dir, &pkg.name, &pkg_dir, &p.to_string_lossy()).await {
                                                             count += 1;
                                                         }
-                                                    }
                                                 }
                                             }
-                                        }
                                     }
                                 }
-                            }
-                        }
                     }
                     ok_outcome("", "pi", format!("Reloaded {count} extension bridge(s)"), started.elapsed().as_millis() as u64)
                 }
@@ -242,9 +208,8 @@ fn parse_pi_spec(spec: &str) -> (String, String, String) {
     };
 
     let pkg_name = if source_type == "npm" {
-        if pkg_spec.starts_with('@') {
+        if let Some(rest) = pkg_spec.strip_prefix('@') {
             // "@scope/name" or "@scope/name@ver"
-            let rest = &pkg_spec[1..];
             let slash = rest.find('/').unwrap_or(rest.len());
             let after_slash = &rest[slash + 1..];
             let name_part = after_slash.split('@').next().unwrap_or(after_slash);
@@ -253,7 +218,7 @@ fn parse_pi_spec(spec: &str) -> (String, String, String) {
             pkg_spec.split('@').next().unwrap_or(pkg_spec).to_string()
         }
     } else if source_type == "git" {
-        pkg_spec.split('/').last().unwrap_or("unknown")
+        pkg_spec.split('/').next_back().unwrap_or("unknown")
             .split('.').next().unwrap_or("unknown")
             .to_string()
     } else {
@@ -343,7 +308,7 @@ async fn install_pi_package(data_dir: &Path, spec: &str) -> ToolOutcome {
                                         for e in entries.flatten() {
                                             let name = e.file_name();
                                             let target = pkg_dir.join(&name);
-                                            let _ = std::fs::rename(&e.path(), &target);
+                                            let _ = std::fs::rename(e.path(), &target);
                                         }
                                     }
                                     let _ = std::fs::remove_dir(&extracted);
@@ -466,8 +431,8 @@ async fn install_pi_package(data_dir: &Path, spec: &str) -> ToolOutcome {
     };
 
     for source in &skill_sources {
-        let source_path = if source.starts_with("./") {
-            pkg_dir.join(&source[2..])
+        let source_path = if let Some(rel) = source.strip_prefix("./") {
+            pkg_dir.join(rel)
         } else {
             PathBuf::from(source)
         };
@@ -492,13 +457,13 @@ async fn install_pi_package(data_dir: &Path, spec: &str) -> ToolOutcome {
     };
 
     for source in &prompt_sources {
-        let source_path = if source.starts_with("./") {
-            pkg_dir.join(&source[2..])
+        let source_path = if let Some(rel) = source.strip_prefix("./") {
+            pkg_dir.join(rel)
         } else {
             PathBuf::from(source)
         };
-        if source_path.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&source_path) {
+        if source_path.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&source_path) {
                 for e in entries.flatten() {
                     let p = e.path();
                     if p.extension().map(|s| s == "md").unwrap_or(false) {
@@ -509,7 +474,6 @@ async fn install_pi_package(data_dir: &Path, spec: &str) -> ToolOutcome {
                     }
                 }
             }
-        }
     }
 
     // --- Extensions ---
@@ -596,7 +560,7 @@ fn scan_and_copy_skills(src: &Path, target: &Path) -> usize {
                     if let Ok(entries2) = std::fs::read_dir(&p) {
                         for e2 in entries2.flatten() {
                             let fname = e2.file_name();
-                            let _ = std::fs::copy(&e2.path(), &skill_target.join(&fname));
+                            let _ = std::fs::copy(e2.path(), skill_target.join(&fname));
                         }
                     }
                     count += 1;
@@ -607,9 +571,9 @@ fn scan_and_copy_skills(src: &Path, target: &Path) -> usize {
             } else if p.extension().map(|s| s == "md").unwrap_or(false) {
                 // Top-level .md files are also skills
                 let name = e.file_name().to_string_lossy().to_string();
-                let skill_target = target.join(&name.replace(".md", ""));
+                let skill_target = target.join(name.replace(".md", ""));
                 let _ = std::fs::create_dir_all(&skill_target);
-                let _ = std::fs::copy(&p, &skill_target.join("SKILL.md"));
+                let _ = std::fs::copy(&p, skill_target.join("SKILL.md"));
                 count += 1;
             }
         }
@@ -625,8 +589,8 @@ async fn generate_bridge(data_dir: &Path, pkg_name: &str, pkg_dir: &Path, ext_pa
     let _ = std::fs::create_dir_all(&bridge_dir);
 
     // Resolve the extension's absolute path relative to the package dir
-    let ext_abs = if ext_path.starts_with("./") {
-        pkg_dir.join(&ext_path[2..])
+    let ext_abs = if let Some(rel) = ext_path.strip_prefix("./") {
+        pkg_dir.join(rel)
     } else {
         PathBuf::from(ext_path)
     };

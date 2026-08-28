@@ -28,6 +28,7 @@ impl Kind {
             Kind::Entity => "entity",
         }
     }
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Kind {
         match s {
             "session" => Kind::Session,
@@ -256,15 +257,15 @@ pub struct Entry {
 mod tests {
     use super::*;
 
-    fn tmp_db(name: &str) -> (temp_dir, Memory) {
+    fn tmp_db(name: &str) -> (TempDir, Memory) {
         let dir = std::env::temp_dir().join(format!("byteai_mem_test_{}_{}", std::process::id(), name));
         std::fs::create_dir_all(&dir).unwrap();
         let m = Memory::open(&dir).unwrap();
-        (temp_dir(dir), m)
+        (TempDir(dir), m)
     }
 
-    struct temp_dir(std::path::PathBuf);
-    impl Drop for temp_dir {
+    struct TempDir(std::path::PathBuf);
+    impl Drop for TempDir {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }

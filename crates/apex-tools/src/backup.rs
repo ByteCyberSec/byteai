@@ -30,11 +30,10 @@ impl BackupTool {
     /// Resolve the project dir to back up: prefer $BYTEAI_SRC if set, else the
     /// current working directory. Falls back to the data dir's parent.
     fn project_dir(&self) -> PathBuf {
-        if let Ok(p) = std::env::var("BYTEAI_SRC") {
-            if !p.is_empty() {
+        if let Ok(p) = std::env::var("BYTEAI_SRC")
+            && !p.is_empty() {
                 return PathBuf::from(p);
             }
-        }
         std::env::current_dir().unwrap_or_else(|_| self.data_dir.clone())
     }
 }
@@ -211,16 +210,14 @@ fn list_backups(dir: &std::path::Path) -> std::io::Result<Vec<(String, u64, std:
     if let Ok(rd) = std::fs::read_dir(dir) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with("byteai-backup-") && name.ends_with(".zip") {
-                if let Ok(md) = e.metadata() {
-                    if let Ok(mt) = md.modified() {
+            if name.starts_with("byteai-backup-") && name.ends_with(".zip")
+                && let Ok(md) = e.metadata()
+                    && let Ok(mt) = md.modified() {
                         items.push((name, md.len(), mt));
                     }
-                }
-            }
         }
     }
-    items.sort_by(|a, b| b.2.cmp(&a.2));
+    items.sort_by_key(|(_, _, m)| std::cmp::Reverse(*m));
     Ok(items)
 }
 

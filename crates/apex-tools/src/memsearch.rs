@@ -105,7 +105,6 @@ impl Tool for MemsearchTool {
 }
 
 /// ---- TF-IDF cosine scoring -------------------------------------------------
-
 const STOPWORDS: &[&str] = &[
     "a", "an", "the", "and", "or", "but", "if", "then", "else", "of", "to", "in",
     "on", "for", "with", "at", "by", "from", "as", "is", "are", "was", "were",

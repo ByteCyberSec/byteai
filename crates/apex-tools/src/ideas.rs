@@ -271,7 +271,7 @@ impl IdeasTool {
             let user = format!(
                 "Today: {today}\nIdea: {idea}\n\n=== EVIDENCE ===\n{evidence}\n=== END EVIDENCE ===\n\nProduce the deep-research report + recommended implementation plan."
             );
-            let synth = self_llm(&ctx, &system, &user, 6000)
+            let synth = self_llm(&ctx, system, &user, 6000)
                 .await
                 .unwrap_or_else(|e| format!("Research failed: {e}"));
             out.push_str(&synth);
@@ -304,14 +304,13 @@ impl IdeasTool {
 
             // Pull any saved research on this idea as context.
             let mut prior = String::new();
-            if let Ok(mem) = apex_memory::Memory::open(&ctx.data_dir.join("memory")) {
-                if let Ok(entries) = mem.search(&idea, Some(Kind::Note), 3) {
+            if let Ok(mem) = apex_memory::Memory::open(&ctx.data_dir.join("memory"))
+                && let Ok(entries) = mem.search(&idea, Some(Kind::Note), 3) {
                     for e in entries {
                                                 prior.push_str(&e.body);
                                                 prior.push('\n');
                                             }
                 }
-            }
             let prior_block = if prior.is_empty() {
                 "(no saved research found — plan from the idea description)".to_string()
             } else {
@@ -321,7 +320,7 @@ impl IdeasTool {
             let user = format!(
                 "Today: {today}\nIdea: {idea}\n\n{prior_block}\n\nProduce the implementation plan. Use ByteAI's existing tooling in the plan (plan, verify, review, gates, spawn, skills, git, sandbox, improve). Output as a plain checklist so it can be loaded into the `plan` tool, then the phase-by-phase narrative."
             );
-            let synth = self_llm(&ctx, &system, &user, 6000)
+            let synth = self_llm(&ctx, system, &user, 6000)
                 .await
                 .unwrap_or_else(|e| format!("Plan failed: {e}"));
             out.push_str(&synth);

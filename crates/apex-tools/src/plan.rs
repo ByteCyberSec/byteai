@@ -126,13 +126,12 @@ Use for multi-step tasks instead of trusting the conversation window.".into(),
                     if let Ok(entries) = std::fs::read_dir(&dir) {
                         for e in entries.flatten() {
                             let p = e.path();
-                            if p.extension().and_then(|x| x.to_str()) == Some("md") {
-                                if let Ok(text) = std::fs::read_to_string(&p) {
+                            if p.extension().and_then(|x| x.to_str()) == Some("md")
+                                && let Ok(text) = std::fs::read_to_string(&p) {
                                     let (title, items) = parse_plan(&text);
                                     let done = items.iter().filter(|(_, d)| *d).count();
                                     plans.push((title, done, items.len(), p));
                                 }
-                            }
                         }
                     }
                     if plans.is_empty() {

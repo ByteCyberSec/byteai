@@ -114,10 +114,10 @@ impl Tool for WorkflowTool {
             "create" => {
                 let steps: Vec<Step> = args.get("steps")
                     .and_then(Value::as_array)
-                    .map(|a| a.iter().filter_map(|s| {
+                    .map(|a| a.iter().map(|s| {
                         let n = s.get("name").and_then(Value::as_str).unwrap_or("step").to_string();
                         let i = s.get("instruction").and_then(Value::as_str).unwrap_or("").to_string();
-                        Some(Step { name: n, instruction: i, output: String::new() })
+                        Step { name: n, instruction: i, output: String::new() }
                     }).collect())
                     .unwrap_or_default();
                 if steps.is_empty() {

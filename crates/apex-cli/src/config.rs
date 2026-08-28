@@ -87,13 +87,11 @@ pub struct ProviderEntry {
 
 impl ProviderEntry {
     pub fn resolved_key(&self) -> String {
-        if !self.api_key_env.is_empty() {
-            if let Ok(v) = std::env::var(&self.api_key_env) {
-                if !v.is_empty() {
+        if !self.api_key_env.is_empty()
+            && let Ok(v) = std::env::var(&self.api_key_env)
+                && !v.is_empty() {
                     return v;
                 }
-            }
-        }
         self.api_key.clone()
     }
 }
@@ -159,8 +157,8 @@ pub fn resolve_provider(cfg: &Config, cli_provider: Option<&str>, cli_base_url: 
 
     // Explicit flags win.
     let name = cli_provider.or(env_name.as_deref());
-    if let Some(n) = name {
-        if let Some(p) = cfg.providers.iter().find(|p| p.name == n) {
+    if let Some(n) = name
+        && let Some(p) = cfg.providers.iter().find(|p| p.name == n) {
             let mut p = p.clone();
             if let Some(u) = cli_base_url.or(env_url.as_deref()) {
                 p.base_url = u.into();
@@ -171,7 +169,6 @@ pub fn resolve_provider(cfg: &Config, cli_provider: Option<&str>, cli_base_url: 
             }
             return p;
         }
-    }
     // Explicit base_url without a named provider.
     if let Some(u) = cli_base_url.or(env_url.as_deref()) {
         return ProviderEntry {
@@ -184,11 +181,10 @@ pub fn resolve_provider(cfg: &Config, cli_provider: Option<&str>, cli_base_url: 
     }
     // Config default_provider wins over "first with key" so the configured
     // model and provider stay matched (e.g. oc/mimo-v2.5-free on omniroute).
-    if !cfg.agent.default_provider.is_empty() {
-        if let Some(p) = cfg.providers.iter().find(|p| p.name == cfg.agent.default_provider) {
+    if !cfg.agent.default_provider.is_empty()
+        && let Some(p) = cfg.providers.iter().find(|p| p.name == cfg.agent.default_provider) {
             return p.clone();
         }
-    }
     // First provider with a resolved key, else the first entry.
     cfg.providers
         .iter()
@@ -267,11 +263,6 @@ pub fn add_provider(
         cfg.agent.model = model.to_string();
     }
     save(cfg)
-}
-
-/// Names of every provider in the config (for the palette / provider list).
-pub fn provider_names(cfg: &Config) -> Vec<String> {
-    cfg.providers.iter().map(|p| p.name.clone()).collect()
 }
 
 #[cfg(test)]

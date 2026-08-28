@@ -213,14 +213,13 @@ impl LspServer {
                     if let Some(tx) = p2.lock().await.remove(&id) {
                         let _ = tx.send(msg);
                     }
-                } else if let Some(params) = msg.get("params") {
-                    if method == "textDocument/publishDiagnostics" {
+                } else if let Some(params) = msg.get("params")
+                    && method == "textDocument/publishDiagnostics" {
                         let uri = params.get("uri").and_then(|u| u.as_str()).unwrap_or("").to_string();
                         let diags = parse_diagnostics(params.get("diagnostics"));
                         debug!("[{}] publishDiagnostics {} diags for {}", spec2.command, diags.len(), uri);
                         d2.lock().await.insert(uri, diags);
                     }
-                }
             }
         });
 
@@ -565,6 +564,7 @@ pub struct LspRegistry {
     servers: RwLock<HashMap<String, Arc<Mutex<ServerState>>>>,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum ServerState {
     Ready(LspServer),
     Unavailable(String),

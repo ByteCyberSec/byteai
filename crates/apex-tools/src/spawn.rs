@@ -34,11 +34,10 @@ struct KillList {
 
 impl KillList {
     fn register(&self, pid: u32) {
-        if pid != 0 {
-            if let Ok(mut p) = self.pids.lock() {
+        if pid != 0
+            && let Ok(mut p) = self.pids.lock() {
                 p.push(pid);
             }
-        }
     }
 
     fn deregister(&self, pid: u32) {
@@ -113,7 +112,7 @@ is worthless).".into(),
             if goals.is_empty() {
                 return ok_outcome("", "spawn", "ERROR: `goals` array (1-5 strings) required".to_string(), started.elapsed().as_millis() as u64);
             }
-            let max_parallel = args.get("max_parallel").and_then(|m| m.as_u64()).unwrap_or(3).min(5).max(1) as usize;
+            let max_parallel = args.get("max_parallel").and_then(|m| m.as_u64()).unwrap_or(3).clamp(1, 5) as usize;
 
             // Locate byteai binary.
             let byteai = std::env::current_exe().ok().unwrap_or_else(|| "byteai".into());
@@ -149,7 +148,7 @@ is worthless).".into(),
                     }
                     args.push(g.clone());
 
-                    let mut child = match Command::new(&cmd).args(&args)
+                    let child = match Command::new(&cmd).args(&args)
                         .stdout(std::process::Stdio::piped())
                         .stderr(std::process::Stdio::piped())
                         .spawn()
@@ -185,7 +184,7 @@ is worthless).".into(),
                         };
                         results.push((i, g, combined));
                     }
-                    Ok((i, g, Err(e))) => { results.push((i, g, format!("{e}"))); }
+                    Ok((i, g, Err(e))) => { results.push((i, g, e.to_string())); }
                     Err(e) => { results.push((0, String::new(), format!("join error: {e}"))); }
                 }
             }

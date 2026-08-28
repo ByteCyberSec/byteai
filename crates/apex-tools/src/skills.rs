@@ -188,8 +188,8 @@ delete <name>. Skills persist in <data_dir>/skills/.".into(),
                             let base = s.path.parent().unwrap_or(&root);
                             for sub in &["references", "scripts", "templates", "assets"] {
                                 let subdir = base.join(sub);
-                                if subdir.is_dir() {
-                                    if let Ok(entries) = std::fs::read_dir(&subdir) {
+                                if subdir.is_dir()
+                                    && let Ok(entries) = std::fs::read_dir(&subdir) {
                                         let files: Vec<_> = entries.flatten()
                                             .map(|e| e.file_name().to_string_lossy().to_string())
                                             .filter(|f| !f.starts_with('.'))
@@ -198,7 +198,6 @@ delete <name>. Skills persist in <data_dir>/skills/.".into(),
                                             out.push_str(&format!("\n{sub}/: {}\n", files.join(", ")));
                                         }
                                     }
-                                }
                             }
                             ok_outcome("", "skills", out, started.elapsed().as_millis() as u64)
                         }

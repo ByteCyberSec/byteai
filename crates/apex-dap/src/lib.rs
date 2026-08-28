@@ -130,11 +130,10 @@ impl DapSession {
                 let mtype = msg.get("type").and_then(|t| t.as_str()).unwrap_or("");
                 match mtype {
                     "response" => {
-                        if let Some(seq) = msg.get("request_seq").and_then(|v| v.as_u64()) {
-                            if let Some(tx) = p2.lock().await.remove(&seq) {
+                        if let Some(seq) = msg.get("request_seq").and_then(|v| v.as_u64())
+                            && let Some(tx) = p2.lock().await.remove(&seq) {
                                 let _ = tx.send(msg);
                             }
-                        }
                     }
                     "event" => {
                         let kind = msg.get("event").and_then(|e| e.as_str()).unwrap_or("event").to_string();
@@ -390,6 +389,7 @@ pub struct DapRegistry {
     sessions: tokio::sync::RwLock<HashMap<String, Arc<Mutex<DapState>>>>,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum DapState {
     Ready(DapSession),
     Unavailable(String),

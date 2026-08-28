@@ -32,11 +32,10 @@ fn walk_files(root: &Path, depth: usize, out: &mut Vec<PathBuf>) {
                 continue;
             }
             walk_files(&p, depth + 1, out);
-        } else if let Some(ext) = p.extension().and_then(|x| x.to_str()) {
-            if matches!(ext, "rs" | "py" | "ts" | "js" | "go" | "c" | "cpp" | "h") {
+        } else if let Some(ext) = p.extension().and_then(|x| x.to_str())
+            && matches!(ext, "rs" | "py" | "ts" | "js" | "go" | "c" | "cpp" | "h") {
                 out.push(p);
             }
-        }
     }
 }
 

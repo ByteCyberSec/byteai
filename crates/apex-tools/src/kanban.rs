@@ -83,11 +83,10 @@ impl Tool for KanbanTool {
                     let mut names = Vec::new();
                     if let Ok(mut rd) = fs::read_dir(self2.boards_dir()).await {
                         while let Ok(Some(e)) = rd.next_entry().await {
-                            if let Some(n) = e.file_name().to_str() {
-                                if n.ends_with(".json") {
+                            if let Some(n) = e.file_name().to_str()
+                                && n.ends_with(".json") {
                                     names.push(n.trim_end_matches(".json").to_string());
                                 }
-                            }
                         }
                     }
                     names.sort();

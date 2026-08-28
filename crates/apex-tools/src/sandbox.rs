@@ -41,7 +41,7 @@ impl Tool for SandboxTool {
             if command.is_empty() {
                 return crate::err_outcome("", "sandbox", &anyhow::anyhow!("missing 'command'"), 0);
             }
-            let timeout_s = args.get("timeout_s").and_then(Value::as_u64).unwrap_or(30).max(1).min(300);
+            let timeout_s = args.get("timeout_s").and_then(Value::as_u64).unwrap_or(30).clamp(1, 300);
             let use_docker = args.get("docker").and_then(Value::as_bool).unwrap_or(false);
 
             // 1. Create a throwaway sandbox dir.

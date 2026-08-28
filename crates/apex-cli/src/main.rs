@@ -386,8 +386,7 @@ async fn doctor() -> Result<()> {
         let on_path = apex_lsp::command_on_path(&spec.command);
         println!("  {:<10} {} {}", spec.lang, if on_path { "OK " } else { "MISSING" }, spec.command);
     }
-    /// Command availability check (shared with LSP registry).
-    let dap = apex_dap::DapRegistry::new(apex_dap::default_adapters());
+    // DAP adapter availability check (shared with the DAP registry).
     println!();
     println!("DAP adapters on PATH:");
     for spec in apex_dap::default_adapters() {
@@ -435,11 +434,10 @@ async fn run_turn(agent: &mut Agent, prompt: &str) -> Result<apex_types::AgentOu
             tokio::select! {
                 _ = stop_rx.recv() => break,
                 _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
-                    if let Ok(l) = live.try_lock() {
-                        if l.iterations > 0 || !l.active_tools.is_empty() {
+                    if let Ok(l) = live.try_lock()
+                        && (l.iterations > 0 || !l.active_tools.is_empty()) {
                             eprint!("\r  {} \x1b[K", l.line(0));
                         }
-                    }
                 }
             }
         }
@@ -487,8 +485,8 @@ async fn repl(agent: &mut Agent) -> Result<()> {
             break; // EOF
         }
         let line = line.trim_end();
-        if line.ends_with('\\') {
-            buffer.push_str(&line[..line.len() - 1]);
+        if let Some(stripped) = line.strip_suffix('\\') {
+            buffer.push_str(stripped);
             buffer.push('\n');
             continue;
         }
@@ -661,7 +659,7 @@ async fn repl(agent: &mut Agent) -> Result<()> {
                             else if focus == "status" { "status" }
                             else { "discover" };
                         let query = if action == "discover" { focus.clone() }
-                            else { focus.splitn(2, ' ').nth(1).unwrap_or("").to_string() };
+                            else { focus.split_once(' ').map(|x| x.1).unwrap_or("").to_string() };
                         let args = serde_json::json!({"action": action, "focus": query});
                         match agent.tools.get("ideas") {
                             Some(t) => {
@@ -710,6 +708,6 @@ async fn repl(agent: &mut Agent) -> Result<()> {
 #[allow(dead_code)]
 fn _keep(_: Arc<Registry>, _: &str) {
     let _ = SYSTEM_PROMPT;
-    let _ = info!("");
+    info!("");
     let _ = Message::system("x");
 }

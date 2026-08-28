@@ -120,7 +120,7 @@ impl Client {
                             }
                             acc.tool_calls[p].arguments.push_str(&args);
                         }
-                        None => acc.tool_calls.push(ToolCallAccum { index: i, id, name, arguments: args.into() }),
+                        None => acc.tool_calls.push(ToolCallAccum { index: i, id, name, arguments: args }),
                     }
                 }
                 StreamEvent::Usage(u) => acc.usage = Some(u),
@@ -200,7 +200,7 @@ impl Client {
                         .get("retry-after")
                         .and_then(|v| v.to_str().ok())
                         .and_then(|v| v.parse::<u64>().ok());
-                    let delay = retry_after.map(|s| Duration::from_secs(s))
+                    let delay = retry_after.map(Duration::from_secs)
                         .unwrap_or_else(|| {
                             let jitter = jitter_ms();
                             Duration::from_millis(BASE_DELAY_MS.saturating_mul(1 << (attempt - 1)) + jitter)
@@ -262,28 +262,25 @@ fn parse_chunk(data: &str) -> Result<Vec<StreamEvent>> {
     let v: Value = serde_json::from_str(data).context("parse SSE json")?;
     let mut evs = Vec::new();
     // Usage-only chunk (some providers send it at the end or in every chunk).
-    if let Some(u) = v.get("usage") {
-        if !u.is_null() {
+    if let Some(u) = v.get("usage")
+        && !u.is_null() {
             let usage = parse_usage(u)?;
             evs.push(StreamEvent::Usage(usage));
             return Ok(evs);
         }
-    }
     let choice = match v.get("choices").and_then(|c| c.as_array()).and_then(|c| c.first()) {
         Some(c) => c,
         None => return Ok(evs),
     };
     let delta = choice.get("delta").cloned().unwrap_or(Value::Null);
-    if let Some(c) = delta.get("content").and_then(|c| c.as_str()) {
-        if !c.is_empty() {
+    if let Some(c) = delta.get("content").and_then(|c| c.as_str())
+        && !c.is_empty() {
             evs.push(StreamEvent::Content(c.to_string()));
         }
-    }
-    if let Some(r) = delta.get("reasoning_content").and_then(|c| c.as_str()) {
-        if !r.is_empty() {
+    if let Some(r) = delta.get("reasoning_content").and_then(|c| c.as_str())
+        && !r.is_empty() {
             evs.push(StreamEvent::Reasoning(r.to_string()));
         }
-    }
     if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_array()) {
         for tc in tcs {
             let index = tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;

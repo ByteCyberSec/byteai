@@ -4,7 +4,7 @@
 //! checks with timeouts, and reports a structured pass/fail summary the agent
 //! uses as its completion gate. Optional LSP diagnostics round out the report.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -43,7 +43,7 @@ enum ProjectKind {
     Unknown,
 }
 
-fn detect_project(dir: &PathBuf) -> ProjectKind {
+fn detect_project(dir: &Path) -> ProjectKind {
     if dir.join("Cargo.toml").exists() {
         ProjectKind::Cargo
     } else if dir.join("package.json").exists() {

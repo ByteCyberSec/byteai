@@ -49,7 +49,7 @@ impl Tool for ImproveTool {
             let started = std::time::Instant::now();
             let task = args.get("task").and_then(Value::as_str).unwrap_or("").to_string();
             let eval_cmd = args.get("eval_cmd").and_then(Value::as_str).unwrap_or("").to_string();
-            let max_iters = args.get("max_iters").and_then(Value::as_u64).unwrap_or(5).max(1).min(20);
+            let max_iters = args.get("max_iters").and_then(Value::as_u64).unwrap_or(5).clamp(1, 20);
             let save_skill = args.get("save_skill").and_then(Value::as_bool).unwrap_or(false);
 
             if task.is_empty() || eval_cmd.is_empty() {

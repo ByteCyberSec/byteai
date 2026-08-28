@@ -187,11 +187,10 @@ fn walk(dir: &Path, visitor: &mut impl FnMut(&Path) -> bool) {
                 return;
             }
             walk(&path, visitor);
-        } else if ft.is_file() {
-            if visitor(&path) {
+        } else if ft.is_file()
+            && visitor(&path) {
                 return;
             }
-        }
     }
 }
 

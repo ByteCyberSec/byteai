@@ -217,13 +217,6 @@ impl Agent {
         }
     }
 
-    /// Update the live status (iterations, active tools, note) from the core.
-    fn update_live(&self) {
-        if let Ok(mut l) = self.live.try_lock() {
-            l.phase = self.phase;
-        }
-    }
-
     pub fn with_system_prompt(&mut self) {
         if !self.history.iter().any(|m| m.role == Role::System) {
             self.history.insert(0, Message::system(SYSTEM_PROMPT));
@@ -267,11 +260,10 @@ impl Agent {
             block.push_str(&format!("- {}: {}\n", e.title, e.body));
         }
         // Insert the memory block right after the system prompt.
-        if let Some(sys) = self.history.first_mut() {
-            if let Some(ref mut c) = sys.content {
+        if let Some(sys) = self.history.first_mut()
+            && let Some(ref mut c) = sys.content {
                 c.push_str(&block);
             }
-        }
     }
 
     /// One user turn: stream the model, dispatch tool calls, loop until done.
@@ -307,7 +299,7 @@ impl Agent {
         let capped = self.config.max_iterations;
         let wall = self.config.run_budget_seconds;
         let mut warned = false;
-        let mut exhaustion: Option<String>;
+        let exhaustion: Option<String>;
 
         loop {
             // --- Interaction budgets (whichever hits first; 0 = unlimited) ---
@@ -315,18 +307,17 @@ impl Agent {
                 exhaustion = Some(format!("iteration budget ({capped} iters)"));
                 break;
             }
-            if let Some(b) = wall {
-                if started.elapsed().as_secs() >= b {
+            if let Some(b) = wall
+                && started.elapsed().as_secs() >= b {
                     exhaustion = Some(format!("wall-clock run budget ({b}s)"));
                     break;
                 }
-            }
             // --- Proactive wrap-up nudge before the cap is hit (beyond Hermes) ---
             if capped > 0 && !warned {
                 let threshold = (capped as f32 * self.config.warn_ratio).max(1.0) as u32;
                 if outcome.iterations + 1 >= threshold {
                     warned = true;
-                    self.history.push(Message::system(&format!(
+                    self.history.push(Message::system(format!(
                         "Interaction budget notice: you are near the {capped}-iteration cap \
                          (about to use {}/{}). Keep working — do NOT stop early — but \
                          prefer to consolidate: if the remaining work is small, finish it \
@@ -365,36 +356,33 @@ impl Agent {
                             // First content token: the model is answering —
                             // move off the "Understanding" placeholder so the
                             // live status shows the real activity.
-                            if content.is_empty() {
-                                if let Ok(mut l) = self.live.try_lock() {
+                            if content.is_empty()
+                                && let Ok(mut l) = self.live.try_lock() {
                                     l.phase = Phase::Verifying;
                                 }
-                            }
                             content.push_str(&c);
                             on_text(&c);
                         }
                         StreamEvent::Reasoning(r) => {
                             // First reasoning token: model is thinking over
                             // results — reflect that as Investigating.
-                            if reasoning.is_empty() {
-                                if let Ok(mut l) = self.live.try_lock() {
+                            if reasoning.is_empty()
+                                && let Ok(mut l) = self.live.try_lock() {
                                     l.phase = Phase::Investigating;
                                 }
-                            }
                             reasoning.push_str(&r);
                         }
                         StreamEvent::ToolCallDelta(index, id, name, args) => {
                             // The model is emitting tool calls: flip to Implementing
                             // immediately so the UI shows "✎ IMPLEMENTING <tool>"
                             // even before dispatch begins.
-                            if !name.is_empty() {
-                                if let Ok(mut l) = self.live.try_lock() {
+                            if !name.is_empty()
+                                && let Ok(mut l) = self.live.try_lock() {
                                     l.phase = Phase::Implementing;
                                     if !l.active_tools.contains(&name.to_string()) {
                                         l.active_tools.push(name.to_string());
                                     }
                                 }
-                            }
                             while calls.len() <= index {
                                 calls.push(ToolCall { id: String::new(), name: String::new(), arguments: String::new() });
                             }
@@ -539,7 +527,7 @@ impl Agent {
             l.phase = Phase::Recovering;
             l.note = format!("stopped: {reason} — raise max_iterations in config (0 = unlimited)");
         }
-        self.history.push(Message::system(&format!(
+        self.history.push(Message::system(format!(
             "Reached the {reason}. Do NOT call any tools. Provide your best final \
              answer now, summarizing what you found and completed so far."
         )));
@@ -636,7 +624,7 @@ impl Agent {
             Err(_) => return,
         };
         for line in text.lines() {
-            let line = line.trim().trim_start_matches(|c| c == '-' || c == '*' || c == ' ').trim();
+            let line = line.trim().trim_start_matches(['-', '*', ' ']).trim();
             if line.is_empty() {
                 continue;
             }
@@ -799,8 +787,7 @@ mod tests {
             (Phase::Complete, "COMPLETE"),
             (Phase::Blocked, "BLOCKED"),
         ] {
-            let mut ls = LiveStatus::default();
-            ls.phase = phase;
+            let ls = LiveStatus { phase, ..LiveStatus::default() };
             let line = ls.line(0);
             assert!(line.to_uppercase().contains(kw), "phase {phase:?} -> {line}");
         }
@@ -811,7 +798,7 @@ mod tests {
         let dir = tmp_dir("inject");
         // Seed one memory entity about "rust async".
         let mut mem = apex_memory::Memory::open(&dir.join("memory")).unwrap();
-        mem.upsert(Kind::Entity, "rust async", "user prefers async rust", &[].to_vec(), None).unwrap();
+        mem.upsert(Kind::Entity, "rust async", "user prefers async rust", &[], None).unwrap();
         drop(mem);
 
         let mut agent = make_agent(&dir);
@@ -849,11 +836,13 @@ mod tests {
     #[test]
     fn live_status_line_renders_phase_and_iterations() {
         // Phase label + spinner frame + iteration count + cap.
-        let mut s = LiveStatus::default();
-        s.iterations = 3;
-        s.iter_cap = 20;
-        s.phase = Phase::Implementing;
-        s.active_tools = vec!["websearch".into()];
+        let mut s = LiveStatus {
+            iterations: 3,
+            iter_cap: 20,
+            phase: Phase::Implementing,
+            active_tools: vec!["websearch".into()],
+            ..LiveStatus::default()
+        };
         let line = s.line(0);
         assert!(line.contains("IMPLEMENTING"), "line: {line}");
         assert!(line.contains("websearch"), "line: {line}");

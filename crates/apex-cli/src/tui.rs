@@ -20,7 +20,7 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScree
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, List, Paragraph};
 use ratatui::{Frame, Terminal};
 
 const MAX_LOG: usize = 3000;
@@ -67,8 +67,6 @@ enum TurnMsg {
     Tool(apex_types::ToolOutcome),
     Done(apex_types::AgentOutcome),
     Err(String),
-    /// Auto-review result (background self-critique after heavy turns).
-    Review(String),
 }
 
 #[derive(Clone)]
@@ -159,7 +157,7 @@ enum PickAction {
 impl App {
     fn new(model: String, provider: String, tools_count: usize, skills_count: usize) -> Self {
         let (review_tx, review_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-        let mut app = Self {
+        Self {
             log: Vec::new(),
             input: String::new(),
             is_command: false,
@@ -192,8 +190,7 @@ impl App {
             follow_bottom: true,
             max_scroll: 0,
             pending_queue: Vec::new(),
-        };
-        app
+        }
     }
 
     fn add_user(&mut self, text: &str) {
@@ -283,11 +280,10 @@ impl App {
     fn add_error(&mut self, text: &str) {
         // Surface errors in the live-status row (via the shared LiveStatus note)
         // instead of dumping them into the chat log. Clears on next run start.
-        if let Some(ref l) = self.live {
-            if let Ok(mut ls) = l.lock() {
+        if let Some(ref l) = self.live
+            && let Ok(mut ls) = l.lock() {
                 ls.note = sanitize_note(text);
             }
-        }
     }
 
     fn add_meta(&mut self, text: impl Into<String>) {
@@ -326,13 +322,11 @@ impl App {
                 Ok(TurnMsg::Done(outcome)) => {
                     self.add_done(outcome.iterations, outcome.tool_calls_made, outcome.usage.total_tokens);
                     // Surface the blocked reason (if any) in the live-status row.
-                    if let Some(ref reason) = outcome.blocked_reason {
-                        if let Some(ref l) = self.live {
-                            if let Ok(mut ls) = l.lock() {
+                    if let Some(ref reason) = outcome.blocked_reason
+                        && let Some(ref l) = self.live
+                            && let Ok(mut ls) = l.lock() {
                                 ls.note = sanitize_note(reason);
                             }
-                        }
-                    }
                     // Surface graceful budget exhaustion (final answer from
                     // partial progress) with WHY it stopped.
                     if outcome.exhausted {
@@ -351,12 +345,11 @@ impl App {
                 Ok(TurnMsg::Err(e)) => {
                     // Set the live status to Blocked + note the error so the
                     // status row reflects the failure (not just the chatbox).
-                    if let Some(ref l) = self.live {
-                        if let Ok(mut ls) = l.lock() {
+                    if let Some(ref l) = self.live
+                        && let Ok(mut ls) = l.lock() {
                             ls.phase = apex_core::Phase::Blocked;
                             ls.note = sanitize_note(&e);
                         }
-                    }
                     self.add_error(&e);
                     if let Some(t) = self.busy_since.take() {
                         self.last_run_duration = t.elapsed().as_secs().max(1);
@@ -365,7 +358,6 @@ impl App {
                     self.turn_task = None;
                     break;
                 }
-                Ok(TurnMsg::Review(msg)) => self.add_meta(format!("  🧠 {msg}")),
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
                     // Keep draining next frame; put receiver back.
                     self.turn_rx = Some(rx);
@@ -560,7 +552,7 @@ async fn run_loop(
                     let m = app.models[app.model_idx].clone();
                     agent.lock().await.config.model = m.clone();
                     app.model = m;
-                    app.add_meta(&format!("  model -> {}", app.model));
+                    app.add_meta(format!("  model -> {}", app.model));
                 } else {
                     app.add_meta("  no model list (provider offline)");
                 }
@@ -760,7 +752,7 @@ async fn run_auto_review(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    if let Ok(dir) = std::fs::create_dir_all(data_dir.join("reviews")) {
+    if let Ok(_dir) = std::fs::create_dir_all(data_dir.join("reviews")) {
         let _ = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -769,7 +761,6 @@ async fn run_auto_review(
                 use std::io::Write;
                 writeln!(f, "[{ts}] tools={tools} iters={iters}\n{review}\n")
             });
-        let _ = dir;
     }
 
     let first_line = review.lines().next().unwrap_or(&review).to_string();
@@ -787,7 +778,7 @@ fn interrupt_turn(app: &mut App, how: &str) {
     app.busy = false;
     app.busy_since = None;
     app.turn_rx = None;
-    app.add_meta(&format!("  ⚡ interrupted ({how})"));
+    app.add_meta(format!("  ⚡ interrupted ({how})"));
 }
 
 /// Execute the selected picker item — the command's final, user-friendly
@@ -872,13 +863,13 @@ fn find_gate_files(root: &str) -> Vec<String> {
         found.push(root_ledger.display().to_string());
     }
     let unlazy = root.join(".unlazy");
-    if unlazy.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&unlazy) {
+    if unlazy.is_dir()
+        && let Ok(entries) = std::fs::read_dir(&unlazy) {
             for e in entries.flatten() {
                 let p = e.path();
                 let gates_dir = p.join("gates");
-                if gates_dir.is_dir() {
-                    if let Ok(gates) = std::fs::read_dir(&gates_dir) {
+                if gates_dir.is_dir()
+                    && let Ok(gates) = std::fs::read_dir(&gates_dir) {
                         for g in gates.flatten() {
                             let gp = g.path();
                             if gp.is_file() && gp.extension().map(|x| x == "md").unwrap_or(false) {
@@ -886,14 +877,12 @@ fn find_gate_files(root: &str) -> Vec<String> {
                             }
                         }
                     }
-                }
                 let plan = p.join("GATES.md");
                 if plan.is_file() {
                     found.push(plan.display().to_string());
                 }
             }
         }
-    }
     found
 }
 
@@ -1091,13 +1080,12 @@ fn spawn_turn(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, text: &str,
     app.busy = true;
     app.busy_since = Some(Instant::now());
     // Clear stale error note from the live status for the new turn.
-    if let Some(ref l) = app.live {
-        if let Ok(mut ls) = l.lock() {
+    if let Some(ref l) = app.live
+        && let Ok(mut ls) = l.lock() {
             ls.note.clear();
             ls.phase = apex_core::Phase::Understanding;
             ls.active_tools.clear();
         }
-    }
 }
 
 async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, cmd_line: &str) {
@@ -1149,8 +1137,8 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
             app.add_assistant("  pickers: ↑↓ scroll · Enter select · Esc cancel");
         }
         "model" | "models" => {
-            if *cmd == "model" {
-                if let Some(m) = parts.get(1) {
+            if *cmd == "model"
+                && let Some(m) = parts.get(1) {
                     let m = m.to_string();
                     // Persist so the choice survives restart (agent + provider).
                     let mut cfg = crate::config::load().unwrap_or_default();
@@ -1165,7 +1153,6 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                     app.add_meta(format!("  model -> {m} (saved as default)"));
                     return;
                 }
-            }
             // No argument: interactive picker — scroll, Enter sets + persists.
             match agent.lock().await.provider.list_models().await {
                 Ok(ids) if !ids.is_empty() => {
@@ -1491,7 +1478,7 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                     let cur_provider = app.provider.clone();
                     let provider = crate::config::resolve_provider(&cfg, Some(&cur_provider), None, None);
                     if provider.name != cur_provider {
-                        app.add_meta(&format!(
+                        app.add_meta(format!(
                             "  provider '{}' no longer in config — default is now '{}'",
                             cur_provider,
                             cfg.agent.default_provider
@@ -1699,7 +1686,7 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                 else if focus == "status" { "status" }
                 else { "discover" };
             let query = if action == "discover" { focus.clone() }
-                else { focus.splitn(2, ' ').nth(1).unwrap_or("").to_string() };
+                else { focus.split_once(' ').map(|x| x.1).unwrap_or("").to_string() };
             let g = agent.lock().await;
             let tool = g.tools.get("ideas");
             drop(g);
@@ -2095,7 +2082,7 @@ fn draw_input(f: &mut Frame, area: Rect, app: &App) {
     let cur_line = (len / inner_w).saturating_sub(scroll);
     let cursor_x = area.x + 1 + col as u16;
     let cursor_y = area.y + 1 + cur_line as u16;
-    f.set_cursor(cursor_x, cursor_y);
+    f.set_cursor_position((cursor_x, cursor_y));
 }
 
 fn draw_status(f: &mut Frame, area: Rect, app: &App) {

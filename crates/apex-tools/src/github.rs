@@ -80,7 +80,7 @@ fn extract_repos(text: &str) -> Vec<(String, String)> {
     let mut rest = text;
     while let Some(pos) = rest.find("github.com/") {
         let tail = &rest[pos + "github.com/".len()..];
-        let mut parts = tail.splitn(3, |c: char| c == '/' || c == ' ' || c == '"' || c == ')' || c == '(' || c == '\n');
+        let mut parts = tail.splitn(3, ['/', ' ', '"', ')', '(', '\n']);
         let owner = parts.next().unwrap_or("").trim().to_string();
         let repo = parts.next().unwrap_or("").trim().to_string();
         if owner.len() >= 2 && repo.len() >= 2 && !owner.contains('.') {
@@ -315,7 +315,7 @@ impl GithubTool {
                 "Today: {today}\nProject at: {}\n\n{manifest}\n\nProduce the capability table + SEARCH FOR lines.",
                 cwd.display()
             );
-            let analysis = llm_call(&ctx, &system, &user, 2500)
+            let analysis = llm_call(&ctx, system, &user, 2500)
                 .await
                 .unwrap_or_else(|e| format!("Analysis failed: {e}"));
             out.push_str(&analysis);
@@ -396,7 +396,7 @@ impl GithubTool {
                 "Today: {today}\nResearch areas: {}\n\n=== EVIDENCE ===\n{evidence}\n=== END EVIDENCE ===\n\nProduce the ranked Top improvements.",
                 areas.join(", ")
             );
-            let synth = llm_call(&ctx, &system, &user, 5000)
+            let synth = llm_call(&ctx, system, &user, 5000)
                 .await
                 .unwrap_or_else(|e| format!("Improve analysis failed: {e}"));
             out.push_str(&synth);
@@ -493,7 +493,7 @@ impl GithubTool {
         let user = format!(
             "Today: {today}\nSearch target: {target}\nCapability focus: {focus}\n\nFor each candidate output EXACTLY:\n\n## Repository: owner/repo\n\nPurpose:\n...\n\nByteAI Compatibility:\nXX / 100\n\nCurrent Project Compatibility:\nXX / 100\n\nMaintenance:\nExcellent / Good / Weak / Abandoned\n\nIntegration Complexity:\nLow / Medium / High\n\nPerformance Impact:\nPositive / Neutral / Negative\n\nSecurity Risk:\nLow / Medium / High\n\nMaintenance Risk:\nLow / Medium / High\n\nLicense:\n...\n\nRecommendation:\nADOPT / ADAPT / LEARN FROM / REJECT\n\nWhy:\n...\n\nThen a final 'Recommendation summary'."
         );
-        (system.into(), user)
+        (system, user)
     }
 }
 

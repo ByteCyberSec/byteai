@@ -176,11 +176,10 @@ fn parse_lite_results(html: &str) -> Vec<LiteResult> {
                 }
                 None => String::new(),
             };
-            if let (Some(t), Some(u)) = (pending_title.take(), pending_url.take()) {
-                if !t.is_empty() && !u.is_empty() {
+            if let (Some(t), Some(u)) = (pending_title.take(), pending_url.take())
+                && !t.is_empty() && !u.is_empty() {
                     results.push(LiteResult { title: t, url: u, snippet });
                 }
-            }
             // Advance past the snippet cell close.
             match content.find('>') {
                 Some(gt) => match content[gt + 1..].find("</td>") {

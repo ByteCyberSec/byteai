@@ -61,11 +61,15 @@ impl Tool for CouncilTool {
                         if fallback.len() >= 4 { break; }
                         if !fallback.contains(id) {
                             let name = id.to_lowercase();
-                            if fallback.len() == 1 && (name.contains("best-reasoning") || name.contains("reasoning")) {
-                                fallback.push(id.clone());
-                            } else if fallback.len() == 2 && (name.contains("best-fast") || name.contains("mini") || name.contains("flash")) {
-                                fallback.push(id.clone());
-                            } else if fallback.len() >= 3 && fallback.len() < 4 {
+                            // Keep the council diverse: 2nd seat = a reasoning
+                            // model, 3rd = a fast one, 4th = anything else.
+                            let want = match fallback.len() {
+                                1 => name.contains("best-reasoning") || name.contains("reasoning"),
+                                2 => name.contains("best-fast") || name.contains("mini") || name.contains("flash"),
+                                3 => true,
+                                _ => false,
+                            };
+                            if want {
                                 fallback.push(id.clone());
                             }
                         }

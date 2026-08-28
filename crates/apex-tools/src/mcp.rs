@@ -7,7 +7,7 @@
 //! Protocol: JSON-RPC 2.0 over stdio (local servers) or HTTP POST (remote).
 //! Server config: `~/.byteai/mcp.json` — array of {name, command?, url?}.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use apex_types::{ToolDef, ToolOutcome};
 use serde_json::{json, Value};
@@ -26,7 +26,7 @@ struct MpcServerCfg {
     args: Vec<String>,
 }
 
-fn load_config(data_dir: &PathBuf) -> Vec<MpcServerCfg> {
+fn load_config(data_dir: &Path) -> Vec<MpcServerCfg> {
     let path = data_dir.join("mcp.json");
     std::fs::read_to_string(&path)
         .ok()
@@ -89,7 +89,7 @@ impl Tool for McpTool {
                         "url": s.url,
                         "args": s.args,
                     })).collect();
-                    return crate::ok_outcome("", "mcp", json!({"servers": list}).to_string(), started.elapsed().as_millis() as u64);
+                    crate::ok_outcome("", "mcp", json!({"servers": list}).to_string(), started.elapsed().as_millis() as u64)
                 }
                 "list_tools" | "list_resources" => {
                     let cfg = servers.iter().find(|s| s.name == server);

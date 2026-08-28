@@ -134,9 +134,9 @@ impl Registry {
     /// All built-in tools for Phase 1 + Phase 2.
     pub fn builtins(ctx: &ToolContext) -> Self {
         let mut r = Registry::default();
-        r.register(Arc::new(shell::ShellTool::default()));
-        r.register(Arc::new(read::ReadTool::default()));
-        r.register(Arc::new(search::SearchTool::default()));
+        r.register(Arc::new(shell::ShellTool));
+        r.register(Arc::new(read::ReadTool));
+        r.register(Arc::new(search::SearchTool));
         r.register(Arc::new(edit::EditTool::new(ctx.lsp.clone())));
         r.register(Arc::new(todo::TodoTool::new(ctx.data_dir.clone())));
         r.register(Arc::new(note::NoteTool::new(ctx.data_dir.join("memory").join("notes"))));

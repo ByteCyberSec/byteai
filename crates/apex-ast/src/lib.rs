@@ -322,15 +322,14 @@ fn walk_node(cursor: &mut tree_sitter::TreeCursor, rules: &LangRules, text: &str
 
 fn collect_imports(cursor: &mut tree_sitter::TreeCursor, rules: &LangRules, text: &str, out: &mut Vec<String>) {
     let node = cursor.node();
-    if rules.imports.contains(&node.kind()) {
-        if let Ok(t) = node.utf8_text(text.as_bytes()) {
+    if rules.imports.contains(&node.kind())
+        && let Ok(t) = node.utf8_text(text.as_bytes()) {
             let one_line: String = t.split_whitespace().collect::<Vec<_>>().join(" ");
             let clipped: String = one_line.chars().take(160).collect();
             if !out.contains(&clipped) {
                 out.push(clipped);
             }
         }
-    }
     if cursor.goto_first_child() {
         loop {
             collect_imports(cursor, rules, text, out);
@@ -367,33 +366,30 @@ fn is_def_node(node: &Node, rules: &LangRules) -> bool {
 }
 
 fn node_name(node: &Node, rules: &LangRules, text: &str) -> Option<String> {
-    if let Some(field) = rules.name_field {
-        if let Some(child) = node.child_by_field_name(field) {
-            if let Ok(t) = child.utf8_text(text.as_bytes()) {
+    if let Some(field) = rules.name_field
+        && let Some(child) = node.child_by_field_name(field)
+            && let Ok(t) = child.utf8_text(text.as_bytes()) {
                 let t = t.trim();
                 if !t.is_empty() {
                     return Some(t.to_string());
                 }
             }
-        }
-    }
     // Bounded-depth search for a name-bearing child (handles wrappers like
     // go type_spec / rust use paths / decorated definitions).
     let mut cursor = node.walk();
-    let mut stack = vec![node.clone()];
+    let mut stack = vec![*node];
     for _ in 0..3 {
         let mut next = Vec::new();
         for n in &stack {
             let mut c = n.walk();
             for child in n.children(&mut c) {
-                if rules.name_child_kinds.contains(&child.kind()) {
-                    if let Ok(t) = child.utf8_text(text.as_bytes()) {
+                if rules.name_child_kinds.contains(&child.kind())
+                    && let Ok(t) = child.utf8_text(text.as_bytes()) {
                         let t = t.trim();
                         if !t.is_empty() {
                             return Some(t.to_string());
                         }
                     }
-                }
                 next.push(child);
             }
         }

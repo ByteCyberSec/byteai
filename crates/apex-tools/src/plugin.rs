@@ -104,11 +104,10 @@ pub fn scan_plugins(dir: &Path) -> Vec<PluginMeta> {
     let Ok(entries) = std::fs::read_dir(dir) else { return out };
     for e in entries.flatten() {
         let p = e.path();
-        if p.extension().and_then(|x| x.to_str()) == Some("toml") {
-            if let Some(m) = parse_plugin(&p) {
+        if p.extension().and_then(|x| x.to_str()) == Some("toml")
+            && let Some(m) = parse_plugin(&p) {
                 out.push(m);
             }
-        }
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out

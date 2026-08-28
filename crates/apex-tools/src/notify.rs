@@ -87,7 +87,7 @@ impl Tool for NotifyTool {
                         format!("registered webhooks:\n  {}", names.iter().map(|n| format!("{n} (url hidden)")).collect::<Vec<_>>().join("\n  "))
                     }
                 }
-                "send" | _ => {
+                _ => {
                     let url = std::fs::read_to_string(&file)
                         .ok()
                         .and_then(|s| serde_json::from_str::<HashMap<String, String>>(&s).ok())
@@ -147,7 +147,7 @@ mod tests {
         let _ = std::fs::remove_file(&tmp);
         let out = t.execute(json!({"action": "send", "name": "nope", "text": "hi"}));
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        let res = rt.block_on(async move { out.await });
+        let res = rt.block_on(out);
         assert!(res.output.contains("no webhook named"));
         let _ = std::fs::remove_file(&tmp);
     }

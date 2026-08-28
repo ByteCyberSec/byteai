@@ -69,7 +69,7 @@ impl Tool for MoaTool {
             };
             let sub_count = 3usize.min(models.len());
             let sub_models: Vec<String> = models[..sub_count].to_vec();
-            let synth_model = models.iter().next()
+            let synth_model = models.first()
                 .cloned()
                 .unwrap_or_else(|| default_model.to_string());
 

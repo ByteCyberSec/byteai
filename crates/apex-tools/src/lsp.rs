@@ -1,7 +1,7 @@
 //! LSP tool: diagnostics, symbols, hover, definition, references, rename,
 //! formatting. Degrades to "unavailable" when no server exists.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -114,7 +114,7 @@ impl Tool for LspTool {
 async fn with_server<T>(
     registry: &LspRegistry,
     lang: &str,
-    root: &PathBuf,
+    root: &Path,
     path: &std::path::Path,
     text: &str,
     f: impl for<'a> FnOnce(&'a mut LspServer) -> apex_lsp::LspFuture<'a, T>,
@@ -132,7 +132,7 @@ async fn with_server<T>(
     }
 }
 
-async fn diag_action(registry: &LspRegistry, path: &std::path::Path, text: &str, lang: &str, root: &PathBuf) -> String {
+async fn diag_action(registry: &LspRegistry, path: &std::path::Path, text: &str, lang: &str, root: &Path) -> String {
     let state = match registry.get(lang, root).await {
         Ok(s) => s,
         Err(e) => return format!("LSP unavailable: {e:#}"),
@@ -151,7 +151,7 @@ async fn diag_action(registry: &LspRegistry, path: &std::path::Path, text: &str,
     }
 }
 
-async fn sym_action(registry: &LspRegistry, path: &std::path::Path, text: &str, lang: &str, root: &PathBuf) -> String {
+async fn sym_action(registry: &LspRegistry, path: &std::path::Path, text: &str, lang: &str, root: &Path) -> String {
     let state = match registry.get(lang, root).await {
         Ok(s) => s,
         Err(e) => return format!("LSP unavailable: {e:#}"),
@@ -184,7 +184,7 @@ async fn lsp_action<T: std::fmt::Display>(
     path: &std::path::Path,
     text: &str,
     lang: &str,
-    root: &PathBuf,
+    root: &Path,
     f: impl for<'a> FnOnce(&'a mut LspServer) -> apex_lsp::LspFuture<'a, T>,
 ) -> String {
     let state = match registry.get(lang, root).await {
@@ -206,7 +206,7 @@ async fn lsp_action<T: std::fmt::Display>(
     }
 }
 
-async fn def_action(registry: &LspRegistry, path: &std::path::Path, text: &str, lang: &str, root: &PathBuf, l: usize, c: usize) -> String {
+async fn def_action(registry: &LspRegistry, path: &std::path::Path, text: &str, lang: &str, root: &Path, l: usize, c: usize) -> String {
     let state = match registry.get(lang, root).await { Ok(s) => s, Err(e) => return format!("LSP unavailable: {e:#}") };
     let mut st = state.lock().await;
     match &mut *st {
@@ -223,7 +223,7 @@ async fn def_action(registry: &LspRegistry, path: &std::path::Path, text: &str, 
     }
 }
 
-async fn refs_action(registry: &LspRegistry, path: &std::path::Path, text: &str, lang: &str, root: &PathBuf, l: usize, c: usize) -> String {
+async fn refs_action(registry: &LspRegistry, path: &std::path::Path, text: &str, lang: &str, root: &Path, l: usize, c: usize) -> String {
     let state = match registry.get(lang, root).await { Ok(s) => s, Err(e) => return format!("LSP unavailable: {e:#}") };
     let mut st = state.lock().await;
     match &mut *st {
@@ -240,7 +240,8 @@ async fn refs_action(registry: &LspRegistry, path: &std::path::Path, text: &str,
     }
 }
 
-async fn rename_action(registry: &LspRegistry, path: &std::path::Path, text: &str, lang: &str, root: &PathBuf, l: usize, c: usize, name: &str) -> String {
+#[allow(clippy::too_many_arguments)]
+async fn rename_action(registry: &LspRegistry, path: &std::path::Path, text: &str, lang: &str, root: &Path, l: usize, c: usize, name: &str) -> String {
     let state = match registry.get(lang, root).await { Ok(s) => s, Err(e) => return format!("LSP unavailable: {e:#}") };
     let mut st = state.lock().await;
     match &mut *st {
@@ -259,7 +260,7 @@ async fn rename_action(registry: &LspRegistry, path: &std::path::Path, text: &st
     }
 }
 
-async fn fmt_action(registry: &LspRegistry, path: &std::path::Path, text: &str, lang: &str, root: &PathBuf) -> String {
+async fn fmt_action(registry: &LspRegistry, path: &std::path::Path, text: &str, lang: &str, root: &Path) -> String {
     let state = match registry.get(lang, root).await { Ok(s) => s, Err(e) => return format!("LSP unavailable: {e:#}") };
     let mut st = state.lock().await;
     match &mut *st {

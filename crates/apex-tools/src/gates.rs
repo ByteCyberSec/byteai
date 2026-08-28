@@ -22,7 +22,7 @@
 //!   * status   — parse and report states, never execute or write
 //!   * run      — execute unmet runnable gates, update the ledger
 //!   * reverify — re-run EVERY runnable gate (parent re-verification);
-//!                stale failures are demoted back to unmet
+//!     stale failures are demoted back to unmet
 //!   * create   — scaffold a ledger from a task + gate list
 
 use std::time::Instant;
@@ -79,7 +79,7 @@ fn parse(text: &str) -> Ledger {
             continue;
         }
         if (trimmed.starts_with("```") || trimmed.starts_with("~~~"))
-            && !trimmed[3..].trim_start().is_empty() == false
+            && trimmed[3..].trim_start().is_empty()
         {
             in_fence = Some(&trimmed[..3]);
             continue;
@@ -110,8 +110,8 @@ fn parse(text: &str) -> Ledger {
         }
 
         // Gate start: "- [ ] ID: title" or "- [x] ID: title"
-        if trimmed.starts_with("- [") {
-            if let Some(rest) = trimmed.strip_prefix("- [") {
+        if trimmed.starts_with("- [")
+            && let Some(rest) = trimmed.strip_prefix("- [") {
                 // "- [ ] ID:" leaves " ] ID:" (leading space); "- [x] ID:" leaves "x] ID:".
                 let (checked, after) = if let Some(r) = rest.strip_prefix("] ") {
                     (false, r)
@@ -149,7 +149,6 @@ fn parse(text: &str) -> Ledger {
                     continue;
                 }
             }
-        }
 
         // Attributes under a gate: CHECK / EXPECT / EVIDENCE / CWD (indented).
         if let Some(g) = cur.and_then(|c| ledger.gates.get_mut(c)) {
@@ -185,13 +184,11 @@ fn parse(text: &str) -> Ledger {
             _ => {}
         }
         // Validate EXPECT regex syntax if slash-wrapped.
-        if let Some(e) = &g.expect {
-            if let Some(pat) = expect_regex(e) {
-                if Regex::new(pat).is_err() {
+        if let Some(e) = &g.expect
+            && let Some(pat) = expect_regex(e)
+                && Regex::new(pat).is_err() {
                     ledger.errors.push(format!("gate {} has an invalid EXPECT regex {:?}", g.id, e));
                 }
-            }
-        }
         if g.evidence.as_deref().map(|e| e == "pending").unwrap_or(false) && g.checked {
             ledger.warnings.push(format!("gate {} is checked but evidence is pending", g.id));
         }
@@ -203,9 +200,8 @@ fn parse(text: &str) -> Ledger {
 /// pattern for regex matching; otherwise return None (plain substring).
 fn expect_regex(expect: &str) -> Option<&str> {
     let e = expect.trim();
-    if e.starts_with('/') {
+    if let Some(body) = e.strip_prefix('/') {
         // trailing slash, optional flags
-        let body = &e[1..];
         if let Some(slash) = body.rfind('/') {
             let flags = &body[slash + 1..];
             if flags.is_empty() || flags == "i" {

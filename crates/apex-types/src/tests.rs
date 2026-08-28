@@ -1,10 +1,11 @@
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::{Message, ToolCall};
 
     #[test]
     fn wire_shape_for_tool_round() {
-        let history = vec![
+        let history = [
             Message::system("sys"),
             Message::user("u"),
             Message::assistant(

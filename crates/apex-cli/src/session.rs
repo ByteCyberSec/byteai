@@ -39,11 +39,10 @@ pub fn list() -> Result<Vec<SessionFile>> {
     for entry in std::fs::read_dir(&dir).context("read sessions dir")? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if let Some(id) = name.strip_suffix(".json") {
-            if let Ok(s) = load(id) {
+        if let Some(id) = name.strip_suffix(".json")
+            && let Ok(s) = load(id) {
                 out.push(s);
             }
-        }
     }
     out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     Ok(out)

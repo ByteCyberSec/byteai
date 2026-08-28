@@ -5,7 +5,7 @@
 //!   - `code`     (editing, tool-heavy)              → strong tool-calling
 //!   - `reasoning`(hard problems)                    → reasoning model
 //!   - `memory`   (recall, summarization)            → balanced
-//! Learns from per-(model,class) success stats stored in the memory DB.
+//!     Learns from per-(model,class) success stats stored in the memory DB.
 
 use std::collections::HashMap;
 
@@ -29,6 +29,7 @@ impl TaskClass {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> TaskClass {
         match s {
             "fast" => TaskClass::Fast,
