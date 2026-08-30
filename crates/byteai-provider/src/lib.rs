@@ -279,7 +279,7 @@ impl Client {
                                 let delay = Duration::from_millis(
                                     BASE_DELAY_MS.saturating_mul(1 << (attempt - 1)) + jitter_ms()
                                 );
-                                tracing::warn!(
+                                tracing::debug!(
                                     "chat_stream empty stream (attempt {attempt}/{MAX_ATTEMPTS}); retrying in {delay:?}"
                                 );
                                 tokio::time::sleep(delay).await;
@@ -317,7 +317,7 @@ impl Client {
                 let delay = Duration::from_millis(
                     BASE_DELAY_MS.saturating_mul(1 << (attempt - 1)) + jitter_ms()
                 );
-                tracing::warn!(
+                tracing::debug!(
                     "chat_stream empty stream (attempt {attempt}/{MAX_ATTEMPTS}); retrying in {delay:?}"
                 );
                 tokio::time::sleep(delay).await;
