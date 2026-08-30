@@ -1512,6 +1512,58 @@ fn match_dan_topic(norm: &str) -> Option<&'static str> {
     }
 }
 
+/// Index of the user turn to redo for /retry (n=1) and /undo (n=N).
+/// Returns the history index whose content should be re-prompted, or None
+/// when fewer than `n` user turns exist.
+fn retry_target(history: &[byteai_types::Message], n: usize) -> Option<usize> {
+    let user_idxs: Vec<usize> = history
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role == byteai_types::Role::User)
+        .map(|(i, _)| i)
+        .collect();
+    user_idxs.iter().rev().nth(n.saturating_sub(1)).copied()
+}
+
+/// Split for /compress: keeps the SYSTEM message (if any) plus the last
+/// `keep` non-system messages verbatim, and returns (dropped, kept) where
+/// `dropped` is the older slice that gets summarized.
+fn compress_split(
+    history: &[byteai_types::Message],
+    keep: usize,
+) -> (Vec<byteai_types::Message>, Vec<byteai_types::Message>) {
+    let (system, rest) = match history.split_first() {
+        Some((s, r)) if s.role == byteai_types::Role::System => (Some(s.clone()), r.to_vec()),
+        _ => (None, history.to_vec()),
+    };
+    let (drop, keep_msgs) = if rest.len() > keep {
+        rest.split_at(rest.len() - keep)
+    } else {
+        (&[][..], rest.as_slice())
+    };
+    let mut out = Vec::new();
+    if let Some(s) = system {
+        out.push(s);
+    }
+    out.extend_from_slice(keep_msgs);
+    (drop.to_vec(), out)
+}
+
+/// Auto-name for /save and /title when no explicit name is given: a slug of
+/// the last user message (max 24 non-whitespace chars), else a fresh id.
+fn title_slug(last_user: &str) -> String {
+    let slug: String = last_user
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .take(24)
+        .collect();
+    if slug.is_empty() {
+        format!("tui-{}", crate::session::new_id().get(..8).unwrap_or("sess"))
+    } else {
+        slug
+    }
+}
+
 async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, cmd_line: &str) {
     let parts: Vec<&str> = cmd_line.split_whitespace().collect();
     let cmd = parts.first().unwrap_or(&"");
@@ -1845,16 +1897,7 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                     .and_then(|m| m.content.clone())
                     .unwrap_or_default();
                 drop(g);
-                let slug: String = last_user
-                    .chars()
-                    .filter(|c| !c.is_whitespace())
-                    .take(24)
-                    .collect();
-                if slug.is_empty() {
-                    format!("tui-{}", crate::session::new_id().get(..8).unwrap_or("sess"))
-                } else {
-                    slug
-                }
+                title_slug(&last_user)
             };
             let g = agent.lock().await;
             let mut sf = crate::session::from_agent(&g.config.model, &app.provider, g.history.clone(), g.usage.clone());
@@ -1889,14 +1932,9 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                 1
             };
             let history = agent.lock().await.history.clone();
-            let user_idxs: Vec<usize> = history
-                .iter()
-                .enumerate()
-                .filter(|(_, m)| m.role == byteai_types::Role::User)
-                .map(|(i, _)| i)
-                .collect();
-            let Some(&target) = user_idxs.iter().rev().nth(n - 1) else {
-                app.add_error(&format!("  only {} user turn(s) to redo", user_idxs.len()));
+            let Some(target) = retry_target(&history, n) else {
+                let user_count = history.iter().filter(|m| m.role == byteai_types::Role::User).count();
+                app.add_error(&format!("  only {user_count} user turn(s) to redo"));
                 return;
             };
             let text = history[target].content.clone().unwrap_or_default();
@@ -1931,15 +1969,7 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                 app.add_meta(format!("  context small ({} msgs) — nothing to compress", history.len()));
                 return;
             }
-            let (system, rest) = match history.split_first() {
-                Some((s, r)) if s.role == byteai_types::Role::System => (Some(s.clone()), r.to_vec()),
-                _ => (None, history.clone()),
-            };
-            let (drop, keep_msgs) = if rest.len() > keep {
-                rest.split_at(rest.len() - keep)
-            } else {
-                (&[][..], rest.as_slice())
-            };
+            let (drop, mut kept) = compress_split(&history, keep);
             // Summarize the dropped messages (best effort; fall back to a
             // plain trim if the provider is offline).
             let dropped_text: String = drop
@@ -1966,11 +1996,13 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                 summary
             };
             let mut new_history = Vec::new();
-            if let Some(s) = system {
-                new_history.push(s);
+            // compress_split returns [system?, ...keep]; the summary must sit
+            // after the system message and before the kept turns.
+            if kept.first().map(|m| m.role == byteai_types::Role::System).unwrap_or(false) {
+                new_history.push(kept.remove(0));
             }
             new_history.push(byteai_types::Message::system(format!("Summary of earlier conversation: {summary}")));
-            new_history.extend(keep_msgs.iter().cloned());
+            new_history.extend(kept);
             {
                 let mut g = agent.lock().await;
                 g.history = new_history.clone();
@@ -3352,5 +3384,73 @@ mod tests {
         assert_eq!(match_dan_topic(""), None);
         // The palette alias /d is documented via COMMANDS and handled.
         assert!(COMMANDS.iter().any(|(n, _)| *n == "dan"));
+    }
+
+    #[test]
+    fn retry_target_finds_last_user_turn() {
+        use byteai_types::Message;
+        let h = vec![
+            Message::system("sys"),
+            Message::user("u1"),
+            Message::assistant(Some("a1".into()), None, None),
+            Message::user("u2"),
+            Message::assistant(Some("a2".into()), None, None),
+        ];
+        // /retry (n=1) targets the most recent user turn.
+        assert_eq!(retry_target(&h, 1), Some(3));
+        // /undo 1 targets the same.
+        assert_eq!(retry_target(&h, 1), Some(3));
+        // /undo 2 targets the second-most-recent.
+        assert_eq!(retry_target(&h, 2), Some(1));
+        // /undo 3 — only two user turns exist.
+        assert_eq!(retry_target(&h, 3), None);
+        // No user turns at all.
+        let empty = vec![Message::system("sys")];
+        assert_eq!(retry_target(&empty, 1), None);
+        // n=0 clamps to the most recent.
+        assert_eq!(retry_target(&h, 0), Some(3));
+    }
+
+    #[test]
+    fn compress_split_keeps_recent_and_summarizable_older() {
+        use byteai_types::Message;
+        // system + 10 user/assistant turns; keep=8 → 2 oldest dropped, system preserved.
+        let mut h = vec![Message::system("sys")];
+        for i in 0..10 {
+            let msg = if i % 2 == 0 { Message::user(format!("m{i}")) } else { Message::assistant(Some(format!("m{i}")), None, None) };
+            h.push(msg);
+        }
+        let (drop, kept) = compress_split(&h, 8);
+        assert_eq!(drop.len(), 2, "2 oldest turns summarized");
+        assert_eq!(drop[0].content.as_deref(), Some("m0"));
+        assert_eq!(kept.len(), 9, "system + 8 kept");
+        assert_eq!(kept[0].role, byteai_types::Role::System);
+        assert_eq!(kept[kept.len() - 1].content.as_deref(), Some("m9"));
+        // Small history: nothing dropped.
+        let small = vec![Message::system("sys"), Message::user("x")];
+        let (d2, k2) = compress_split(&small, 8);
+        assert!(d2.is_empty());
+        assert_eq!(k2.len(), 2);
+        // No system message: kept is just the recent window.
+        let nosys = vec![Message::user("a"), Message::user("b")];
+        let (d3, k3) = compress_split(&nosys, 1);
+        assert_eq!(d3.len(), 1);
+        assert_eq!(k3.len(), 1);
+        assert_eq!(k3[0].content.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn title_slug_derives_name_from_last_user_message() {
+        // Whitespace stripped, capped at 24 chars.
+        let s = title_slug("fix the build please");
+        assert_eq!(s, "fixthebuildplease");
+        // Long message truncated to 24 non-space chars.
+        let long = title_slug("a very long user message that should be truncated down");
+        assert_eq!(long.len(), 24);
+        // Empty message falls back to a tui- prefixed id.
+        let empty = title_slug("");
+        assert!(empty.starts_with("tui-"), "got {empty}");
+        let ws = title_slug("   \n\t  ");
+        assert!(ws.starts_with("tui-"), "got {ws}");
     }
 }
