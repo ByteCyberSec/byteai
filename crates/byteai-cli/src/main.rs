@@ -54,6 +54,82 @@ enum Cmd {
     Memory(MemoryArgs),
 }
 
+/// Human-friendly formatting for JSON tool outputs in the REPL.
+/// Keeps the raw data but renders it the way a human wants to read it.
+fn pretty_route(output: &str) -> String {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(output) {
+        let alias = v.get("alias").and_then(|a| a.as_str()).unwrap_or("?");
+        let model = v.get("model").and_then(|a| a.as_str()).unwrap_or("").to_string();
+        let provider = v.get("provider").and_then(|a| a.as_str()).unwrap_or("").to_string();
+        let reasoning = v.get("reasoning").and_then(|a| a.as_str()).unwrap_or("").to_string();
+        let fallbacks: Vec<String> = v
+            .get("fallbacks")
+            .and_then(|f| f.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        let mut out = format!("routing → {alias}");
+        if !model.is_empty() {
+            out.push_str(&format!(" (model {model}"));
+            if !provider.is_empty() {
+                out.push_str(&format!(" · {provider}"));
+            }
+            out.push(')');
+        }
+        if !reasoning.is_empty() {
+            out.push_str(&format!("\n  why: {reasoning}"));
+        }
+        if !fallbacks.is_empty() {
+            out.push_str(&format!("\n  fallbacks: {}", fallbacks.join(", ")));
+        }
+        out
+    } else {
+        output.to_string()
+    }
+}
+
+fn pretty_council(output: &str) -> String {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(output) {
+        let approved = v.get("approved").and_then(|a| a.as_bool()).unwrap_or(false);
+        let models = v.get("models_consulted").and_then(|a| a.as_u64()).unwrap_or(0);
+        let rate = v.get("approval_rate").and_then(|a| a.as_str()).unwrap_or("");
+        let mut out = format!("council verdict: {} ({models} models consulted, approval {rate})", if approved { "APPROVED" } else { "REJECTED" });
+        if let Some(votes) = v.get("votes").and_then(|x| x.as_array()) {
+            for vv in votes {
+                if let (Some(name), Some(vote)) = (vv.get("model").and_then(|x| x.as_str()), vv.get("vote").and_then(|x| x.as_str())) {
+                    out.push_str(&format!("\n  {name}: {vote}"));
+                }
+            }
+        }
+        out
+    } else {
+        output.to_string()
+    }
+}
+
+fn pretty_govern(output: &str) -> String {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(output) {
+        let approved = v.get("approved").and_then(|a| a.as_bool()).unwrap_or(false);
+        let mut out = format!("guardrail: {}", if approved { "✓ APPROVED" } else { "✗ BLOCKED" });
+        if let Some(need) = v.get("needs_human_approval").and_then(|a| a.as_array()) {
+            if !need.is_empty() {
+                let kinds: Vec<String> = need.iter().filter_map(|x| x.as_str().map(String::from)).collect();
+                out.push_str(&format!("\n  requires human approval: {}", kinds.join(", ")));
+            }
+        }
+        if let Some(viol) = v.get("violations").and_then(|a| a.as_array()) {
+            if !viol.is_empty() {
+                out.push_str(&format!("\n  violations: {}", viol.len()));
+            }
+        }
+        if let Some(path) = v.get("audit_path").and_then(|a| a.as_str()) {
+            out.push_str(&format!("\n  audited: {path}"));
+        }
+        out
+    } else {
+        output.to_string()
+    }
+}
+
 #[derive(clap::Args)]
 struct ServeArgs {
     /// Port to listen on (default 8424).
@@ -775,7 +851,7 @@ async fn repl(agent: &mut Agent) -> Result<()> {
                     match agent.tools.get("route") {
                         Some(t) => {
                             let outcome = t.execute(args).await;
-                            println!("[route] {}", outcome.output);
+                            println!("[route] {}", pretty_route(&outcome.output));
                         }
                         None => println!("[route tool not available]"),
                     }
@@ -789,7 +865,7 @@ async fn repl(agent: &mut Agent) -> Result<()> {
                         match agent.tools.get("council") {
                             Some(t) => {
                                 let outcome = t.execute(args).await;
-                                println!("[council] {}", outcome.output);
+                                println!("[council] {}", pretty_council(&outcome.output));
                             }
                             None => println!("[council tool not available]"),
                         }
@@ -804,7 +880,7 @@ async fn repl(agent: &mut Agent) -> Result<()> {
                         match agent.tools.get("govern") {
                             Some(t) => {
                                 let outcome = t.execute(args).await;
-                                println!("[govern] {}", outcome.output);
+                                println!("[govern] {}", pretty_govern(&outcome.output));
                             }
                             None => println!("[govern tool not available]"),
                         }
@@ -1186,3 +1262,48 @@ fn _keep(_: Arc<Registry>, _: &str) {
     info!("");
     let _ = Message::system("x");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pretty_route_formats_json() {
+        let raw = r#"{"alias":"auto/best-fast","fallbacks":["minimax-m3","glm-5.1"],"model":"deepseek-v4-flash","provider":"provider","reasoning":"task type 'fast' -> auto/best-fast","task_type":"fast"}"#;
+        let out = pretty_route(raw);
+        assert!(out.contains("routing → auto/best-fast"), "shows alias: {out}");
+        assert!(out.contains("deepseek-v4-flash"), "shows model: {out}");
+        assert!(out.contains("why: task type 'fast'"), "shows reasoning: {out}");
+        assert!(out.contains("minimax-m3, glm-5.1"), "shows fallbacks: {out}");
+        assert!(!out.contains('{'), "no raw JSON: {out}");
+    }
+
+    #[test]
+    fn pretty_route_passthrough_non_json() {
+        assert_eq!(pretty_route("plain text"), "plain text");
+    }
+
+    #[test]
+    fn pretty_govern_formats_json() {
+        let blocked = r#"{"approved":false,"audit_logged":true,"audit_path":"/tmp/x/audit.log","needs_human_approval":["delete"],"violations":[]}"#;
+        let out = pretty_govern(blocked);
+        assert!(out.contains("✗ BLOCKED"), "blocked shows: {out}");
+        assert!(out.contains("requires human approval: delete"), "shows need: {out}");
+        assert!(!out.contains('{'), "no raw JSON: {out}");
+
+        let allowed = r#"{"approved":true,"audit_logged":true,"needs_human_approval":[],"violations":[]}"#;
+        assert!(pretty_govern(allowed).contains("✓ APPROVED"));
+    }
+
+    #[test]
+    fn pretty_council_formats_json() {
+        let raw = r#"{"approved":true,"approval_rate":"75%","models_consulted":4,"votes":[{"model":"a","vote":"approve"},{"model":"b","vote":"reject"}]}"#;
+        let out = pretty_council(raw);
+        assert!(out.contains("council verdict: APPROVED"), "verdict: {out}");
+        assert!(out.contains("4 models consulted"), "count: {out}");
+        assert!(out.contains("approval 75%"), "rate: {out}");
+        assert!(out.contains("a: approve"), "vote detail: {out}");
+        assert!(!out.contains('{'), "no raw JSON: {out}");
+    }
+}
+
