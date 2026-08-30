@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="782" height="206" viewBox="0 0 782 206">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0%" stop-color="#1e1f26"/>
+<stop offset="100%" stop-color="#141519"/>
+</linearGradient>
+</defs>
+<rect x="0" y="0" width="782" height="206" rx="10" fill="url(#bg)"/>
+<rect x="0" y="0" width="782" height="34" rx="10" fill="#26272e"/>
+<rect x="0" y="24" width="782" height="10" fill="#26272e"/>
+<circle cx="18" cy="17" r="5.5" fill="#ff5f57"/>
+<circle cx="36" cy="17" r="5.5" fill="#ff5f57"/>
+<circle cx="54" cy="17" r="5.5" fill="#ff5f57"/>
+<circle cx="36" cy="17" r="5.5" fill="#febc2e"/>
+<circle cx="54" cy="17" r="5.5" fill="#28c840"/>
+<text x="391" y="22" fill="#9a9ba5" font-family="Menlo,Consolas,monospace" font-size="12" text-anchor="middle">ByteAi — GitHub status</text>
+<text x="14" y="62" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">✓ gh CLI available</text>
+<text x="14" y="80" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">✓ GitHub auth OK — ✓ Logged in to github.com account ByteCyberSec (keyring)</text>
+<text x="14" y="98" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">Project: /Users/ingfix/byteai</text>
+<text x="14" y="116" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">— no git remote `origin` yet (run /github connect)</text>
+<text x="14" y="134" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">— no GitHub repo `byteai` yet (run /github connect)</text>
+<text x="14" y="152" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13"></text>
+<text x="14" y="170" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">To publish this project: /github connect [repo-name] [public|private]</text>
+<text x="14" y="188" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13"></text>
+</svg>

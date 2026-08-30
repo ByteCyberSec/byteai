@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="782" height="458" viewBox="0 0 782 458">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0%" stop-color="#1e1f26"/>
+<stop offset="100%" stop-color="#141519"/>
+</linearGradient>
+</defs>
+<rect x="0" y="0" width="782" height="458" rx="10" fill="url(#bg)"/>
+<rect x="0" y="0" width="782" height="34" rx="10" fill="#26272e"/>
+<rect x="0" y="24" width="782" height="10" fill="#26272e"/>
+<circle cx="18" cy="17" r="5.5" fill="#ff5f57"/>
+<circle cx="36" cy="17" r="5.5" fill="#ff5f57"/>
+<circle cx="54" cy="17" r="5.5" fill="#ff5f57"/>
+<circle cx="36" cy="17" r="5.5" fill="#febc2e"/>
+<circle cx="54" cy="17" r="5.5" fill="#28c840"/>
+<text x="391" y="22" fill="#9a9ba5" font-family="Menlo,Consolas,monospace" font-size="12" text-anchor="middle">ByteAi — REPL help</text>
+<text x="14" y="62" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">ByteAi REPL — model deepseek-v4-flash · 42 tools. Type /help for commands.</text>
+<text x="14" y="80" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">(multiline: end a line with \ )</text>
+<text x="14" y="98" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/help           — this message</text>
+<text x="14" y="116" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/model &lt;name&gt;   — show or switch model (e.g. /model deepseek-v4-flash)</text>
+<text x="14" y="134" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/provider &lt;name&gt; — show or switch provider (e.g. /provider omniroute)</text>
+<text x="14" y="152" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/tools          — list available tools</text>
+<text x="14" y="170" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/route &lt;type&gt; &lt;task&gt; — route a task to the best model</text>
+<text x="14" y="188" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/council &lt;question&gt;  — multi-model deliberation vote</text>
+<text x="14" y="206" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/govern &lt;action&gt;    — constitutional guardrail check</text>
+<text x="14" y="224" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/ideas [focus]  — discover top product ideas from real problems</text>
+<text x="14" y="242" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">                  (/ideas menu · /ideas research &lt;idea&gt; · /ideas build &lt;idea&gt;)</text>
+<text x="14" y="260" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/github [target query] — discover+score skills/tools/harnesses/mcp</text>
+<text x="14" y="278" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">                  (/github skills &lt;cap&gt; · /github improve · /github current)</text>
+<text x="14" y="296" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/github connect [repo] [public|private] — publish this project to GitHub (gh CLI)</text>
+<text x="14" y="314" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/github status — GitHub auth + repo status · /github push — push latest</text>
+<text x="14" y="332" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/save &lt;name&gt;    — save this session</text>
+<text x="14" y="350" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/usage          — show token usage</text>
+<text x="14" y="368" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/cap            — toggle CAP (Coding Auto-Pilot): ON=autonomous, OFF=wait for your answers</text>
+<text x="14" y="386" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/setup          — interactive setup wizard (providers, models, skills, tools)</text>
+<text x="14" y="404" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/clear          — clear conversation history</text>
+<text x="14" y="422" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/settings       — show current settings</text>
+<text x="14" y="440" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">/quit           — exit</text>
+</svg>

@@ -6,16 +6,18 @@
 mod config;
 mod session;
 mod serve;
+mod setup;
 #[cfg(feature = "tui")]
 mod tui;
+mod toolcards;
 
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use apex_core::{Agent, AgentConfig, SYSTEM_PROMPT};
 use apex_provider::Client;
-use apex_tools::{Registry, ToolContext};
-use apex_types::{Message, ToolOutcome};
+use apex_tools::{Registry, Tool, ToolContext};
+use apex_types::Message;
 use clap::{Parser, Subcommand};
 use tracing::info;
 
@@ -44,6 +46,12 @@ enum Cmd {
     /// Run an HTTP daemon: proxy chat completions to the provider (router mode)
     /// and expose built-in tools over HTTP (daemon mode).
     Serve(ServeArgs),
+    /// Interactive first-run wizard: providers, models, skills, tools, agent settings.
+    Setup,
+    /// GitHub integration: connect/status/push via gh CLI, or discovery actions.
+    Github(GithubArgs),
+    /// TencentDB Agent Memory management: status, setup, search, capture.
+    Memory(MemoryArgs),
 }
 
 #[derive(clap::Args)]
@@ -100,6 +108,13 @@ struct ChatArgs {
     /// iteration cap / this budget hits first wraps the turn up gracefully.
     #[arg(long)]
     budget_seconds: Option<u64>,
+    /// Force full autonomy (CAP ON): byteai never pauses to ask the user
+    /// questions — it decides autonomously and keeps working. When OFF (default
+    /// from config), a model question that looks like it's asking the user
+    /// pauses the turn. Use --cap for sub-agents and background tasks that
+    /// cannot receive stdin.
+    #[arg(long, default_value_t = false)]
+    cap: bool,
 }
 
 #[derive(clap::Args)]
@@ -122,14 +137,18 @@ enum SessionCmd {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "info,byteai=info".into()),
-        )
-        .with_target(false)
-        .init();
-
     let cli = Cli::parse();
+
+    // The TUI installs its own tracing pipeline (WARN/ERROR events are routed
+    // into the chat log as notifications instead of stderr), so logs can never
+    // land at the terminal cursor and corrupt the typing box. Every other
+    // surface keeps the plain stderr formatter.
+    let is_tui = cfg!(feature = "tui")
+        && (cli.cmd.is_none() || matches!(cli.cmd, Some(Cmd::Tui)));
+    if !is_tui {
+        init_stderr_tracing();
+    }
+
     match cli.cmd {
         None => {
             // Bare `byteai` → TUI (the friendly default surface, oh-my-pi style).
@@ -149,6 +168,9 @@ async fn main() -> Result<()> {
                     no_tools: false,
                     resume: None,
                     save: None,
+                    max_iterations: None,
+                    budget_seconds: None,
+                    cap: false,
                 };
                 chat(args).await
             }
@@ -169,7 +191,22 @@ async fn main() -> Result<()> {
         }
         Some(Cmd::Tool(ta)) => tool_cmd(ta).await,
         Some(Cmd::Serve(sa)) => serve_cmd(sa).await,
+        Some(Cmd::Setup) => setup::run(),
+        Some(Cmd::Github(args)) => github_cmd(args).await,
+        Some(Cmd::Memory(args)) => memory_cmd(args).await,
     }
+}
+
+/// Plain stderr tracing formatter used by non-TUI surfaces (chat, repl,
+/// serve, tool, doctor, models, session). The TUI must NOT use this: stderr
+/// writes land at the terminal cursor in raw mode and corrupt the input box.
+fn init_stderr_tracing() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "info,byteai=info".into()),
+        )
+        .with_target(false)
+        .init();
 }
 
 /// `byteai serve` — HTTP daemon (router + remote tool invocations).
@@ -227,6 +264,10 @@ async fn tool_cmd(ta: ToolArgs) -> Result<()> {
 }
 
 /// Build the agent from CLI/config resolution.
+///
+/// Constructs a ProviderPool from ALL configured providers that have a
+/// resolved key (or the explicitly-selected provider), so the agent can
+/// fail over to a second provider if the primary dies mid-task.
 fn build_agent(
     args: &ChatArgs,
     no_tools: bool,
@@ -234,7 +275,6 @@ fn build_agent(
     let cfg = config::load()?;
     let provider = config::resolve_provider(&cfg, args.provider.as_deref(), args.base_url.as_deref(), args.api_key.as_deref());
     let model = config::resolve_model(&cfg, args.model.as_deref(), &provider);
-    let client = Client::new(provider.base_url.clone(), provider.resolved_key())?;
     let agent_cfg = AgentConfig {
         model: model.clone(),
         max_iterations: args.max_iterations.unwrap_or(cfg.agent.max_iterations),
@@ -246,13 +286,47 @@ fn build_agent(
         tool_timeout: std::time::Duration::from_secs(cfg.agent.tool_timeout_seconds.unwrap_or(300)),
         tools_enabled: !no_tools,
         auto_continue: cfg.agent.auto_continue,
+        cap_enabled: cfg.agent.cap_enabled || args.cap,
+        tool_select: cfg.agent.tool_select && !no_tools,
+        tool_select_max: cfg.agent.tool_select_max,
+        tdai: cfg.memory.to_tdai_config(),
         ..AgentConfig::default()
     };
     let data_dir = config::data_dir();
     let lsp = Arc::new(apex_lsp::LspRegistry::new(apex_lsp::default_servers()));
     let dap = Arc::new(apex_dap::DapRegistry::new(apex_dap::default_adapters()));
     let tools = Registry::builtins(&ToolContext::with_all(data_dir.clone(), lsp, dap));
-    let agent = Agent::new(client, agent_cfg, tools, data_dir.clone());
+
+    // Build a failover pool: the resolved provider first, then every other
+    // configured provider with a resolved key (deduped by name). The pool
+    // starts on the resolved provider; on hard failure the agent rotates.
+    // When --provider is explicitly passed, ONLY that provider is included
+    // (to avoid auth issues from providers with mismatched keys).
+    let mut entries: Vec<apex_provider::pool::ProviderEntry> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut push = |name: String, p: &config::ProviderEntry, mdl: String| {
+        if seen.contains(&name) {
+            return;
+        }
+        if let Ok(c) = Client::new(p.base_url.clone(), p.resolved_key()) {
+            entries.push(apex_provider::pool::ProviderEntry { name: name.clone(), client: c, model: mdl });
+            seen.insert(name);
+        }
+    };
+    push(provider.name.clone(), &provider, model.clone());
+    if args.provider.is_none() {
+        for p in &cfg.providers {
+            if p.name == provider.name {
+                continue;
+            }
+            // Prefer the provider's own model, else the effective model.
+            let mdl = if p.model.is_empty() { model.clone() } else { p.model.clone() };
+            push(p.name.clone(), p, mdl);
+        }
+    }
+    let pool = apex_provider::pool::ProviderPool::new(entries);
+
+    let agent = Agent::new(pool, agent_cfg, tools, data_dir.clone());
     Ok((agent, provider.name.clone(), model))
 }
 
@@ -270,8 +344,43 @@ async fn chat(mut args: ChatArgs) -> Result<()> {
 
     match args.prompt.take() {
         Some(prompt) => {
-            let outcome = run_turn(&mut agent, &prompt).await?;
-            report(&outcome, &agent);
+            // Fire due scheduled jobs before the one-shot turn.
+            run_due_jobs();
+            // Loop on needs_input: when the agent asks a question (CAP off),
+            // WAIT for the user's answer on the terminal instead of letting
+            // the agent auto-answer. Each answer continues the same turn.
+            let mut p = prompt;
+            loop {
+                let (outcome, turn_tools, turn_ms) = run_turn(&mut agent, &p).await?;
+                if outcome.needs_input {
+                    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                        println!();
+                        println!("[type your answer and press Enter to continue the task — or Enter alone to stop]");
+                        use std::io::BufRead;
+                        let mut line = String::new();
+                        let read = std::io::stdin().lock().read_line(&mut line)?;
+                        if read == 0 {
+                            report(&outcome, &agent, &turn_tools, turn_ms);
+                            break;
+                        }
+                        let answer = line.trim().to_string();
+                        if answer.is_empty() {
+                            report(&outcome, &agent, &turn_tools, turn_ms);
+                            break;
+                        }
+                        p = answer;
+                        continue;
+                    }
+                    // Non-interactive (piped) stdin: don't hang. Print the
+                    // question + paused state; the user resumes interactively.
+                    println!();
+                    println!("[✋ byteai asked you a question and is waiting for your answer. Run byteai interactively to continue the same task.]");
+                    report(&outcome, &agent, &turn_tools, turn_ms);
+                    break;
+                }
+                report(&outcome, &agent, &turn_tools, turn_ms);
+                break;
+            }
         }
         None => {
             repl(&mut agent).await?;
@@ -424,10 +533,8 @@ async fn models() -> Result<()> {
     Ok(())
 }
 
-async fn run_turn(agent: &mut Agent, prompt: &str) -> Result<apex_types::AgentOutcome> {
-    // Live status poller (Hermes-style): while the turn runs, print the
-    // current activity (phase + active tool + iterations) to stderr so the
-    // user sees what the agent is doing without corrupting the stdout stream.
+async fn run_turn(agent: &mut Agent, prompt: &str) -> Result<(apex_types::AgentOutcome, Vec<(String, u64)>, u64)> {
+    let start = std::time::Instant::now();
     let live = agent.live.clone();
     let (stop_tx, mut stop_rx) = tokio::sync::mpsc::channel::<()>(1);
     let poller = tokio::spawn(async move {
@@ -445,21 +552,34 @@ async fn run_turn(agent: &mut Agent, prompt: &str) -> Result<apex_types::AgentOu
         eprint!("\r\x1b[K");
     });
     let mut text_sink = |t: &str| print!("{t}");
-    let mut tool_sink = |o: &ToolOutcome| {
-        let preview: String = o.output.chars().take(90).collect();
-        let preview = preview.replace('\n', " ");
+    let ansi = toolcards::stdout_is_tty();
+    let mut turn_tools: Vec<(String, u64)> = Vec::new();
+    let mut tool_sink = |o: &apex_types::ToolOutcome| {
+        turn_tools.push((o.name.clone(), o.elapsed_ms));
+        let box_w = toolcards::term_width();
         println!();
-        println!("  [tool] {} {} — {} ({} ms)", o.name, if o.ok { "✓" } else { "✗" }, preview, o.elapsed_ms);
+        println!("{}", toolcards::cli_card(&o.name, o.ok, o.elapsed_ms, &o.output, box_w, ansi));
     };
     let outcome = agent.run(prompt, &mut text_sink, &mut tool_sink).await?;
     let _ = stop_tx.send(()).await;
     let _ = poller.await;
+    let turn_ms = start.elapsed().as_millis() as u64;
     println!();
-    Ok(outcome)
+    Ok((outcome, turn_tools, turn_ms))
 }
 
-fn report(outcome: &apex_types::AgentOutcome, agent: &Agent) {
+fn report(outcome: &apex_types::AgentOutcome, agent: &Agent, turn_tools: &[(String, u64)], turn_ms: u64) {
     println!();
+    if outcome.needs_input {
+        // The model asked the user a question; the turn paused. The question
+        // itself was already streamed. Tell the user we're waiting and how
+        // to continue (their next input continues the same task).
+        println!("[✋ awaiting your input — byteai asked you a question. Type your answer and press Enter to continue the same task.]");
+        return;
+    }
+    if !turn_tools.is_empty() {
+        println!("{}", toolcards::ribbon(turn_tools, turn_ms));
+    }
     if outcome.finished {
         println!("[done: {} iterations, {} tool calls, {} tokens, phase={}]", outcome.iterations, outcome.tool_calls_made, outcome.usage.total_tokens, agent.phase.as_str());
         if outcome.exhausted {
@@ -471,6 +591,30 @@ fn report(outcome: &apex_types::AgentOutcome, agent: &Agent) {
     }
 }
 
+/// Fire any due scheduled jobs (Hermes cron parity). Call this at the start
+/// of each REPL iteration and before one-shot turns so background jobs
+/// actually run — the schedule tool persists jobs, this worker executes them.
+fn run_due_jobs() -> usize {
+    let data_dir = config::data_dir();
+    let tool = apex_tools::schedule::ScheduleTool::new(data_dir.clone());
+    // Normalize: the tool's constructor takes the data dir path, same as
+    // the registry uses when constructing the tool (data_dir.join("schedule.json")).
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let fired = tool.tick(now);
+    for j in &fired {
+        println!(
+            "[schedule] {} fired — runs={} result={}",
+            j.name,
+            j.runs,
+            j.last_result.chars().take(80).collect::<String>()
+        );
+    }
+    fired.len()
+}
+
 /// Interactive REPL with a small command surface.
 async fn repl(agent: &mut Agent) -> Result<()> {
     println!("ByteAi REPL — model {} · {} tools. Type /help for commands.", agent.config.model, agent.tools.names().len());
@@ -478,6 +622,9 @@ async fn repl(agent: &mut Agent) -> Result<()> {
     let stdin = std::io::stdin();
     let mut buffer = String::new();
     loop {
+        // Fire due scheduled jobs before each prompt so background work runs
+        // even while the user is typing.
+        run_due_jobs();
         let mut line = String::new();
         use std::io::BufRead;
         let read = stdin.lock().read_line(&mut line)?;
@@ -511,8 +658,12 @@ async fn repl(agent: &mut Agent) -> Result<()> {
                     println!("                  (/ideas menu · /ideas research <idea> · /ideas build <idea>)");
                     println!("/github [target query] — discover+score skills/tools/harnesses/mcp");
                     println!("                  (/github skills <cap> · /github improve · /github current)");
+                    println!("/github connect [repo] [public|private] — publish this project to GitHub (gh CLI)");
+                    println!("/github status — GitHub auth + repo status · /github push — push latest");
                     println!("/save <name>    — save this session");
                     println!("/usage          — show token usage");
+                    println!("/cap            — toggle CAP (Coding Auto-Pilot): ON=autonomous, OFF=wait for your answers");
+                    println!("/setup          — interactive setup wizard (providers, models, skills, tools)");
                     println!("/clear          — clear conversation history");
                     println!("/settings       — show current settings");
                     println!("/quit           — exit");
@@ -558,7 +709,7 @@ async fn repl(agent: &mut Agent) -> Result<()> {
                                 println!("[provider {p} not found — see /provider]");
                                 continue;
                             }
-                            agent.provider = match apex_provider::Client::new(provider.base_url.clone(), provider.resolved_key()) {
+                            let client = match apex_provider::Client::new(provider.base_url.clone(), provider.resolved_key()) {
                                 Ok(c) => c,
                                 Err(e) => {
                                     println!("[provider {p}: failed: {e:#}]");
@@ -566,6 +717,7 @@ async fn repl(agent: &mut Agent) -> Result<()> {
                                 }
                             };
                             let model = config::resolve_model(&cfg, None, &provider);
+                            agent.pool.replace_active(&p, client, &model);
                             agent.config.model = model.clone();
                             let mut cfg2 = config::load().unwrap_or_default();
                             let _ = config::set_default_provider(&mut cfg2, p);
@@ -679,7 +831,7 @@ async fn repl(agent: &mut Agent) -> Result<()> {
                     } else {
                         let first = cmd.split_whitespace().nth(1).unwrap_or("").to_string();
                         let action = match first.as_str() {
-                            "menu"|"search"|"evaluate"|"improve"|"current"|"memory"|"graph" => first.clone(),
+                            "menu"|"search"|"evaluate"|"improve"|"current"|"memory"|"graph"|"connect"|"status"|"push" => first.clone(),
                             _ => "search".to_string(),
                         };
                         let args = serde_json::json!({"action": action, "target": first, "query": rest});
@@ -692,16 +844,237 @@ async fn repl(agent: &mut Agent) -> Result<()> {
                         }
                     }
                 }
+                "cap" => {
+                    agent.config.cap_enabled = !agent.config.cap_enabled;
+                    let mut cfg = config::load().unwrap_or_default();
+                    let _ = config::set_cap(&mut cfg, agent.config.cap_enabled);
+                    println!("[CAP (Coding Auto-Pilot) -> {}]", if agent.config.cap_enabled { "ON — full autonomy, no stopping for questions" } else { "OFF — waits for your answer at questions" });
+                }
                 "settings" => {
                     println!("[model={}, tools={}, provider tokens={}]", agent.config.model, agent.tools.names().len(), agent.usage.total_tokens);
+                }
+                "setup" => {
+                    if let Err(e) = setup::run() {
+                        println!("[setup failed: {e:#}]");
+                    }
                 }
                 "quit" | "q" | "exit" => break,
                 _ => println!("unknown command /{cmd} — try /help"),
             }
             continue;
         }
-        let outcome = run_turn(agent, &full).await?;
-        report(&outcome, agent);
+        let (outcome, turn_tools, turn_ms) = run_turn(agent, &full).await?;
+        if outcome.needs_input {
+            // The agent asked a question and is waiting. Do NOT print the
+            // "done/blocked" report — the next line the user types is their
+            // answer, and it continues the same task (history already holds
+            // the question).
+            println!();
+            println!("[✋ byteai is waiting for your answer — type it and press Enter to continue]");
+            continue;
+        }
+        report(&outcome, agent, &turn_tools, turn_ms);
+    }
+    Ok(())
+}
+
+#[derive(clap::Args, Default)]
+struct GithubArgs {
+    /// Action: connect [repo] [public|private] | status | push | menu | search <target> <query> | evaluate <repo> | current | improve | memory | graph
+    args: Vec<String>,
+}
+
+/// `byteai github …` — GitHub integration (mirror of `/github`).
+async fn github_cmd(a: GithubArgs) -> Result<()> {
+    let args = a.args.clone();
+    let action = args.first().map(|s| s.as_str()).unwrap_or("menu");
+    let (action, target, query) = if action == "connect" || action == "status" || action == "push" {
+        // connect [repo] [public|private] → action=connect, target=connect, query=rest
+        let rest = args[1..].join(" ");
+        (action.to_string(), action.to_string(), rest)
+    } else if action == "menu" || action == "memory" || action == "graph" || action == "current" {
+        (action.to_string(), action.to_string(), String::new())
+    } else if action == "evaluate" || action == "improve" || action == "search" {
+        let rest = args[1..].join(" ");
+        let first = args.get(1).cloned().unwrap_or_default();
+        (action.to_string(), first, rest)
+    } else {
+        // Bare `byteai github` with a target like `skills <query>` → search.
+        ("search".to_string(), args[0].clone(), args.join(" "))
+    };
+
+    let data_dir = config::data_dir();
+    let lsp = Arc::new(apex_lsp::LspRegistry::new(apex_lsp::default_servers()));
+    let dap = Arc::new(apex_dap::DapRegistry::new(apex_dap::default_adapters()));
+    let mut ctx = ToolContext::with_all(data_dir.clone(), lsp, dap);
+    if let Ok(cfg) = config::load() {
+        let provider = config::resolve_provider(&cfg, None, None, None);
+        let model = config::resolve_model(&cfg, None, &provider);
+        if let Ok(client) = Client::new(provider.base_url.clone(), provider.resolved_key()) {
+            ctx = ctx.with_provider(client, model);
+        }
+    }
+    let tool = apex_tools::github::GithubTool::new(ctx);
+    let outcome = tool
+        .execute(serde_json::json!({"action": action, "target": target, "query": query}))
+        .await;
+    println!("{}", outcome.output);
+    if !outcome.ok {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+#[derive(clap::Args, Default)]
+struct MemoryArgs {
+    /// Subcommand: status | setup | search | capture | skills | persona | scenario
+    #[command(subcommand)]
+    cmd: Option<MemoryCmd>,
+}
+#[derive(Subcommand)]
+enum MemoryCmd {
+    /// Show the native memory hub status (enabled, db path, per-layer counts).
+    Status,
+    /// One-shot enable: set [memory] enabled=true in config.toml.
+    Setup,
+    /// Search the native hub (L1 atomics + L0 conversation + skills).
+    Search { query: String },
+    /// Capture a message pair into L0 (session, user, assistant).
+    Capture {
+        #[arg(long, default_value = "default-conversation")]
+        session: String,
+        user: String,
+        assistant: Option<String>,
+    },
+    /// List skills in the hub's skill memory.
+    Skills,
+    /// Write the L3 core persona.
+    Persona { text: String },
+    /// Write an L2 scenario file.
+    Scenario { path: String, content: String },
+}
+
+/// ByteAi memory hub management (`byteai memory ...`). Native, local-first —
+/// no external service. All data lives in data_dir/memory/memory.db.
+async fn memory_cmd(args: MemoryArgs) -> Result<()> {
+    let cfg = config::load()?;
+    let data_dir = config::data_dir().join("memory");
+    let enabled = cfg.memory.enabled;
+
+    match args.cmd {
+        Some(MemoryCmd::Status) | None => {
+            let hub = match apex_memory::hub::MemoryHub::open(&data_dir) {
+                Ok(h) => h,
+                Err(e) => anyhow::bail!("cannot open memory hub at {}: {e}", data_dir.display()),
+            };
+            println!("memory hub: {} ({})", if enabled { "ENABLED" } else { "disabled — run `byteai memory setup`" }, data_dir.join("memory.db").display());
+            match hub.stats() {
+                Ok(stats) => {
+                    for (label, count) in &stats {
+                        println!("  {label}: {count}");
+                    }
+                }
+                Err(e) => println!("  stats error: {e}"),
+            }
+            if let Ok(Some(core)) = hub.core_read() {
+                println!("  l3 persona: {} (v{})", core.content.chars().take(60).collect::<String>(), core.version);
+            } else {
+                println!("  l3 persona: (not set — use `byteai memory persona \"...\"`)");
+            }
+        }
+        Some(MemoryCmd::Setup) => {
+            let mut cfg = config::load()?;
+            cfg.memory.enabled = true;
+            config::save(&cfg)?;
+            println!("✓ memory hub enabled — [memory] enabled = true in {}", config::path().display());
+            println!("  Data lives in {}", data_dir.join("memory.db").display());
+            println!("  Every byteai turn now captures L0 dialogue and recalls L1/L2/L3 + skills.");
+        }
+        Some(MemoryCmd::Search { query }) => {
+            if !enabled {
+                anyhow::bail!("memory not enabled — run `byteai memory setup` first");
+            }
+            let hub = apex_memory::hub::MemoryHub::open(&data_dir)?;
+            println!("L1 atomics:");
+            match hub.atomic_search(&query, 10) {
+                Ok(items) if !items.is_empty() => {
+                    for it in items {
+                        println!("  • [{}] {}", it.mem_type, it.content);
+                    }
+                }
+                Ok(_) => println!("  (none)"),
+                Err(e) => println!("  error: {e}"),
+            }
+            println!("L0 conversation:");
+            match hub.conversation_search(&query, 5) {
+                Ok(items) if !items.is_empty() => {
+                    for it in items {
+                        println!("  • [{}] {}", it.role, it.content);
+                    }
+                }
+                Ok(_) => println!("  (none)"),
+                Err(e) => println!("  error: {e}"),
+            }
+            println!("skills:");
+            match hub.skill_search(&query, 5) {
+                Ok(items) if !items.is_empty() => {
+                    for it in items {
+                        println!("  • {} (v{})", it.name, it.version);
+                    }
+                }
+                Ok(_) => println!("  (none)"),
+                Err(e) => println!("  error: {e}"),
+            }
+        }
+        Some(MemoryCmd::Capture { session, user, assistant }) => {
+            if !enabled {
+                anyhow::bail!("memory not enabled — run `byteai memory setup` first");
+            }
+            let mut hub = apex_memory::hub::MemoryHub::open(&data_dir)?;
+            let mut msgs: Vec<(&str, &str)> = vec![("user", &user)];
+            if let Some(a) = &assistant {
+                msgs.push(("assistant", a));
+            }
+            match hub.conversation_add(&session, &msgs) {
+                Ok(n) => println!("captured {n} message(s) → session {session}"),
+                Err(e) => anyhow::bail!("capture failed: {e}"),
+            }
+        }
+        Some(MemoryCmd::Skills) => {
+            if !enabled {
+                anyhow::bail!("memory not enabled — run `byteai memory setup` first");
+            }
+            let hub = apex_memory::hub::MemoryHub::open(&data_dir)?;
+            match hub.skill_list(50) {
+                Ok(items) if !items.is_empty() => {
+                    for it in items {
+                        println!("  • {} (v{})", it.name, it.version);
+                    }
+                }
+                Ok(_) => println!("  (no skills in hub — use the `skills` tool or add SKILL.md files)"),
+                Err(e) => println!("  error: {e}"),
+            }
+        }
+        Some(MemoryCmd::Persona { text }) => {
+            if !enabled {
+                anyhow::bail!("memory not enabled — run `byteai memory setup` first");
+            }
+            let mut hub = apex_memory::hub::MemoryHub::open(&data_dir)?;
+            match hub.core_write(&text) {
+                Ok(()) => println!("✓ L3 core persona written (v{})", hub.core_read().ok().flatten().map(|c| c.version).unwrap_or(1)),
+                Err(e) => anyhow::bail!("persona write failed: {e}"),
+            }
+        }
+        Some(MemoryCmd::Scenario { path, content }) => {
+            if !enabled {
+                anyhow::bail!("memory not enabled — run `byteai memory setup` first");
+            }
+            let mut hub = apex_memory::hub::MemoryHub::open(&data_dir)?;
+            match hub.scenario_write(&path, &content, None) {
+                Ok(()) => println!("✓ L2 scenario written: {path}"),
+                Err(e) => anyhow::bail!("scenario write failed: {e}"),
+            }
+        }
     }
     Ok(())
 }

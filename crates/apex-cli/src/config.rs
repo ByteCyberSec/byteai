@@ -11,6 +11,72 @@ pub struct Config {
     pub agent: AgentSection,
     #[serde(default)]
     pub providers: Vec<ProviderEntry>,
+    #[serde(default)]
+    pub memory: MemorySection,
+}
+
+/// ByteAi layered memory hub settings ([memory] in config.toml).
+/// Native, local-first — the TencentDB Agent Memory model (L0 conversations,
+/// L1 atomics, L2 scenarios, L3 persona, skills) lives inside byteai's own
+/// SQLite store (data_dir/memory/memory.db). No external service required.
+/// When `enabled`, byteai recalls L2/L3/L1 + skills into the system prompt
+/// each turn and captures L0 dialogue afterwards.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MemorySection {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Session/conversation id used for L0 capture. Empty = "default-conversation".
+    #[serde(default)]
+    pub conversation_id: String,
+    // The fields below are legacy remote-gateway options. They are unused by
+    // the native hub and kept only so old config files still parse.
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub gateway_api_key: String,
+    #[serde(default)]
+    pub service_id: String,
+    #[serde(default)]
+    pub user_key: String,
+    #[serde(default)]
+    pub team_id: String,
+    #[serde(default)]
+    pub agent_id: String,
+    #[serde(default)]
+    pub user_id: String,
+    #[serde(default)]
+    pub task_id: String,
+}
+
+impl MemorySection {
+    /// Convert to the apex-memory TDAI config used by the agent core.
+    /// Only `enabled` and `conversation_id` matter for the native hub.
+    pub fn to_tdai_config(&self) -> apex_memory::tdai::TdaiConfig {
+        apex_memory::tdai::TdaiConfig {
+            base_url: if self.base_url.is_empty() {
+                "http://127.0.0.1:8420".into()
+            } else {
+                self.base_url.clone()
+            },
+            gateway_api_key: if self.gateway_api_key.is_empty() {
+                "local".into()
+            } else {
+                self.gateway_api_key.clone()
+            },
+            service_id: if self.service_id.is_empty() {
+                "default".into()
+            } else {
+                self.service_id.clone()
+            },
+            user_key: self.user_key.clone(),
+            team_id: self.team_id.clone(),
+            agent_id: self.agent_id.clone(),
+            user_id: self.user_id.clone(),
+            task_id: if self.task_id.is_empty() { None } else { Some(self.task_id.clone()) },
+            conversation_id: self.conversation_id.clone(),
+            enabled: self.enabled,
+        }
+    }
 }
 
 fn default_max_iterations() -> u32 { 300 }
@@ -58,6 +124,22 @@ pub struct AgentSection {
     /// CONTINUE — never wait for a human "continue" mid-task.
     #[serde(default = "default_true")]
     pub auto_continue: bool,
+    /// CAP — Coding Auto-Pilot. false (default): when the model asks the
+    /// user a question, byteai PAUSES and waits for the answer. true: full
+    /// autonomy — byteai never stops to ask, it decides and keeps working.
+    #[serde(default)]
+    pub cap_enabled: bool,
+    /// Smart Tool Selection: expose only task-relevant tools instead of every
+    /// tool def every call (kills context rot; from isair/jarvis + OpenJarvis).
+    #[serde(default = "default_true")]
+    pub tool_select: bool,
+    /// Cap on tools exposed per turn when tool_select is on.
+    #[serde(default = "default_tool_select_max")]
+    pub tool_select_max: usize,
+}
+
+fn default_tool_select_max() -> usize {
+    apex_core::toolselect::DEFAULT_MAX
 }
 
 impl Default for AgentSection {
@@ -74,6 +156,9 @@ impl Default for AgentSection {
             auto_review_min_tools: default_auto_min_tools(),
             auto_review_min_iters: default_auto_min_iters(),
             auto_continue: default_true(),
+            cap_enabled: false,
+            tool_select: default_true(),
+            tool_select_max: default_tool_select_max(),
         }
     }
 }
@@ -128,6 +213,7 @@ impl Default for Config {
                     model: "deepseek-v4-flash".into(),
                 },
             ],
+            memory: MemorySection::default(),
         }
     }
 }
@@ -136,6 +222,11 @@ pub fn config_dir() -> PathBuf {
     std::env::var("BYTEAI_CONFIG_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| dirs::config_dir().unwrap_or_else(|| PathBuf::from("~/.config")).join("byteai"))
+}
+
+/// Full path to the config file (config.toml in the config dir).
+pub fn path() -> PathBuf {
+    config_dir().join("config.toml")
 }
 
 pub fn data_dir() -> PathBuf {
@@ -234,6 +325,12 @@ pub fn set_model(cfg: &mut Config, provider_name: &str, model: &str) -> Result<(
 /// Persist a default-provider switch.
 pub fn set_default_provider(cfg: &mut Config, provider_name: &str) -> Result<()> {
     cfg.agent.default_provider = provider_name.to_string();
+    save(cfg)
+}
+
+/// Persist the CAP (Coding Auto-Pilot) toggle.
+pub fn set_cap(cfg: &mut Config, enabled: bool) -> Result<()> {
+    cfg.agent.cap_enabled = enabled;
     save(cfg)
 }
 
@@ -359,5 +456,20 @@ mod tests {
         let mut cfg = Config::default();
         set_default_provider(&mut cfg, "bai").unwrap();
         assert_eq!(load().unwrap().agent.default_provider, "bai");
+    }
+
+    #[test]
+    fn set_cap_persists_and_defaults_off() {
+        let _g = lock();
+        let dir = temp_dir("cap");
+        unsafe { std::env::set_var("BYTEAI_CONFIG_DIR", &dir) };
+        let cfg = Config::default();
+        assert!(!cfg.agent.cap_enabled, "CAP must default OFF (wait for user)");
+        let mut cfg = cfg;
+        set_cap(&mut cfg, true).unwrap();
+        let mut back = load().unwrap();
+        assert!(back.agent.cap_enabled, "CAP ON must persist through save/load");
+        set_cap(&mut back, false).unwrap();
+        assert!(!load().unwrap().agent.cap_enabled, "CAP OFF must persist through save/load");
     }
 }

@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="240" viewBox="0 0 880 240">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0%" stop-color="#15161c"/>
+<stop offset="100%" stop-color="#0d0e12"/>
+</linearGradient>
+<linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+<stop offset="0%" stop-color="#6ee7b7"/>
+<stop offset="100%" stop-color="#38bdf8"/>
+</linearGradient>
+</defs>
+<rect x="0" y="0" width="880" height="240" rx="12" fill="url(#bg)"/>
+<rect x="0" y="0" width="880" height="38" rx="12" fill="#1c1d24"/>
+<rect x="0" y="30" width="880" height="8" fill="#1c1d24"/>
+<circle cx="20" cy="19" r="6" fill="#ff5f57"/>
+<circle cx="40" cy="19" r="6" fill="#ff5f57"/>
+<circle cx="60" cy="19" r="6" fill="#ff5f57"/>
+<circle cx="40" cy="19" r="6" fill="#febc2e"/>
+<circle cx="60" cy="19" r="6" fill="#28c840"/>
+<text x="440" y="24" fill="#8b8d98" font-family="Menlo,Consolas,monospace" font-size="12.5" text-anchor="middle">ByteAi — autonomous coding agent</text>
+<rect x="0" y="35" width="0" height="3" fill="url(#accent)">
+<animate attributeName="width" from="0" to="880" dur="2.5s" fill="freeze"/>
+</rect>
+<text x="16" y="72" fill="#6ee7b7" font-family="Menlo,Consolas,monospace" font-size="14">❯</text>
+<text x="38" y="72" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="14">byteai</text>
+<rect x="112" y="60" width="9" height="16" fill="#38bdf8">
+<animate attributeName="opacity" values="1;0;1" dur="1.1s" repeatCount="indefinite"/>
+</rect>
+<text x="16" y="92" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13.5" opacity="0">byteai chat &quot;implement a login API with rate limiting&quot;</text>
+<text x="16" y="92" fill="#6ee7b7" font-family="Menlo,Consolas,monospace" font-size="13.5" opacity="0">
+<animate attributeName="opacity" from="0" to="1" begin="0.00s" dur="0.35s" fill="freeze"/>
+</text>
+<text x="16" y="112" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13.5" opacity="0">  ✓ loaded 6 skills · 42 tools</text>
+<text x="16" y="112" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13.5" opacity="0">
+<animate attributeName="opacity" from="0" to="1" begin="0.12s" dur="0.35s" fill="freeze"/>
+</text>
+<text x="16" y="132" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13.5" opacity="0">  ◇ reasoning: pick a framework + auth flow</text>
+<text x="16" y="132" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13.5" opacity="0">
+<animate attributeName="opacity" from="0" to="1" begin="0.25s" dur="0.35s" fill="freeze"/>
+</text>
+<text x="16" y="152" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13.5" opacity="0">  ▶ read Cargo.toml · src/main.rs</text>
+<text x="16" y="152" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13.5" opacity="0">
+<animate attributeName="opacity" from="0" to="1" begin="0.38s" dur="0.35s" fill="freeze"/>
+</text>
+<text x="16" y="172" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13.5" opacity="0">  ▶ edit src/auth.rs — implement login endpoint</text>
+<text x="16" y="172" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13.5" opacity="0">
+<animate attributeName="opacity" from="0" to="1" begin="0.50s" dur="0.35s" fill="freeze"/>
+</text>
+<text x="16" y="192" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13.5" opacity="0">  ▶ test: cargo test --lib auth</text>
+<text x="16" y="192" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13.5" opacity="0">
+<animate attributeName="opacity" from="0" to="1" begin="0.62s" dur="0.35s" fill="freeze"/>
+</text>
+<text x="16" y="212" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13.5" opacity="0">  ✓ 3 tests passed (login, rate-limit, 401)</text>
+<text x="16" y="212" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13.5" opacity="0">
+<animate attributeName="opacity" from="0" to="1" begin="0.75s" dur="0.35s" fill="freeze"/>
+</text>
+<text x="16" y="232" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13.5" opacity="0">  [done: 12 iterations, 9 tool calls, 4.2k tokens]</text>
+<text x="16" y="232" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13.5" opacity="0">
+<animate attributeName="opacity" from="0" to="1" begin="0.88s" dur="0.35s" fill="freeze"/>
+</text>
+<rect x="16" y="242" width="9" height="16" fill="#6ee7b7" opacity="0">
+<animate attributeName="opacity" values="0;1;0" begin="1.00s" dur="1.2s" repeatCount="indefinite"/>
+</rect>
+</svg>

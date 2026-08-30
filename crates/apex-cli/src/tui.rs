@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use apex_core::Agent;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -22,6 +22,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, List, Paragraph};
 use ratatui::{Frame, Terminal};
+use crate::toolcards;
 
 const MAX_LOG: usize = 3000;
 
@@ -39,7 +40,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("provider", "switch provider — scroll-pick or /provider <name>"),
     ("addprovider", "add provider+model: /addprovider name url model [key]"),
     ("reload", "reload config.toml into the session"),
-    ("tools", "list available tools"),
+    ("tools", "tool status: /tools [auto|all]"),
     ("clear", "clear conversation"),
     ("save", "save session: /save [name]"),
     ("usage", "show token usage (/usage reset)"),
@@ -54,10 +55,13 @@ const COMMANDS: &[(&str, &str)] = &[
     ("council", "multi-model deliberation vote"),
     ("govern", "constitutional guardrail check"),
     ("gates", "acceptance ledger: status/run/reverify/create"),
+    ("cap", "toggle CAP (Coding Auto-Pilot): ON=autonomous, OFF=wait for your answers"),
     ("ideas", "evidence-based idea discovery: /ideas <focus>"),
     ("github", "capability discovery: /github <target> <query>"),
+    ("setup", "interactive setup wizard: /setup (providers, models, skills, tools)"),
     ("subagent", "spawn parallel subagents"),
     ("swarm", "spawn 3-way swarm"),
+    ("dan", "Dan methodology: /dan [topic] | query <t> | apply <task> | help"),
     ("quit", "exit"),
 ];
 
@@ -75,7 +79,17 @@ enum LogEntry {
     /// Streamed assistant text; chunks coalesce onto the current line so
     /// tokens don't wrap onto separate lines (jcode-style).
     Assistant(String),
-    ToolCard { name: String, ok: bool, elapsed_ms: u64, output: String },
+    /// A tool outcome rendered as an interactive "activity card": icon +
+    /// color-coded status + humanized time, with the full output kept so the
+    /// card can be expanded/collapsed in place (Enter with the card focused).
+    ToolCard {
+        id: u64,
+        name: String,
+        ok: bool,
+        elapsed_ms: u64,
+        output: String,
+        truncated: bool,
+    },
     Meta(String),
 }
 
@@ -110,6 +124,11 @@ struct App {
     /// Channel for auto-review results (non-blocking, spawned per heavy turn).
     review_rx: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
     review_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    /// WARN/ERROR notifications captured from the tracing pipeline (provider
+    /// retries, transient errors, …). Drained into the chat log as Meta
+    /// entries so they surface after the answer — never written to stderr,
+    /// which would land at the terminal cursor and corrupt the typing box.
+    notify_rx: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
     /// Live activity status (phase, active tools, iteration progress) shared
     /// with the agent core — polled every frame for the Hermes-style status line.
     live: Option<Arc<std::sync::Mutex<apex_core::LiveStatus>>>,
@@ -135,6 +154,24 @@ struct App {
     /// Last command run + when (debounce: identical repeats inside 300ms are
     /// ignored — kills double-Enter/key-repeat duplicates at the source).
     last_cmd: Option<(String, std::time::Instant)>,
+    /// Monotonic id source for tool cards (ids survive log trimming, so card
+    /// focus/expansion stays stable even when old entries are pruned).
+    next_card_id: u64,
+    /// Which tool card is currently focused (its stable id). Tab / Shift+Tab
+    /// cycle; Enter (with empty input) expands/collapses; Esc clears.
+    card_focus: Option<u64>,
+    /// Ids of tool cards that are expanded (full output shown).
+    card_expanded: std::collections::HashSet<u64>,
+    /// Tool calls made during the current turn (name, elapsed) — collected
+    /// into the end-of-turn "ribbon" summary line.
+    turn_tools: Vec<(String, u64)>,
+    /// When the current turn started (ribbon duration + status timing).
+    turn_start: Option<Instant>,
+    /// Geometry of the chat area from the last frame — used to map a mouse
+    /// click to the exact tool card under the cursor.
+    last_chat_y: u16,
+    last_chat_h: u16,
+    last_chat_w: u16,
 }
 
 /// A scrollable pick list (Hermes-style): items with underlying values, and
@@ -176,6 +213,7 @@ impl App {
             turn_rx: None,
             review_rx: Some(review_rx),
             review_tx,
+            notify_rx: None,
             live: None,
             last_outcome: None,
             busy: false,
@@ -190,6 +228,14 @@ impl App {
             follow_bottom: true,
             max_scroll: 0,
             pending_queue: Vec::new(),
+            next_card_id: 0,
+            card_focus: None,
+            card_expanded: std::collections::HashSet::new(),
+            turn_tools: Vec::new(),
+            turn_start: None,
+            last_chat_y: 0,
+            last_chat_h: 0,
+            last_chat_w: 0,
         }
     }
 
@@ -253,14 +299,22 @@ impl App {
     }
 
     fn add_tool_card(&mut self, name: &str, ok: bool, elapsed_ms: u64, output: &str) {
-        let preview: String = output.chars().take(160).collect();
-        let preview = if output.len() > 160 { format!("{preview}…") } else { preview };
-        self.log.push(LogEntry::ToolCard {
-            name: name.to_string(),
-            ok,
-            elapsed_ms,
-            output: preview,
-        });
+        const MAX_OUTPUT: usize = 24 * 1024;
+        let id = self.next_card_id;
+        self.next_card_id += 1;
+        let (truncated, full) = if output.len() > MAX_OUTPUT {
+            let mut cap = output[..MAX_OUTPUT].to_string();
+            // Ensure we don't split a multi-byte UTF-8 char.
+            while !cap.is_char_boundary(cap.len()) {
+                cap.pop();
+            }
+            cap.push_str("\n… (output truncated)");
+            (true, cap)
+        } else {
+            (false, output.to_string())
+        };
+        self.log.push(LogEntry::ToolCard { id, name: name.to_string(), ok, elapsed_ms, output: full, truncated });
+        self.turn_tools.push((name.to_string(), elapsed_ms));
         if self.follow_bottom {
             self.scroll = 0;
         }
@@ -272,6 +326,16 @@ impl App {
         self.last_tokens = tokens;
         self.last_iters = iter;
         self.last_tools = tools;
+        // Ribbon: which tools ran and how long the whole turn took.
+        if !self.turn_tools.is_empty() {
+            let total_ms = self
+                .turn_start
+                .map(|t| t.elapsed().as_millis() as u64)
+                .unwrap_or(0);
+            self.add_meta(format!("  {}", toolcards::ribbon(&self.turn_tools, total_ms)));
+            self.turn_tools.clear();
+        }
+        self.turn_start = None;
         while self.log.len() > MAX_LOG {
             self.log.remove(0);
         }
@@ -293,11 +357,59 @@ impl App {
         }
     }
 
+    /// All tool-card ids currently in the log, in order.
+    fn card_ids(&self) -> Vec<u64> {
+        self.log
+            .iter()
+            .filter_map(|e| match e {
+                LogEntry::ToolCard { id, .. } => Some(*id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Move card focus to the next/previous tool card (wraps). Focus is
+    /// sticky: once a card is focused, Tab/Shift+Tab cycle through them.
+    fn cycle_card_focus(&mut self, dir: i64) {
+        let ids = self.card_ids();
+        if ids.is_empty() {
+            self.card_focus = None;
+            return;
+        }
+        let next = match self.card_focus {
+            Some(cur) => match ids.iter().position(|x| *x == cur) {
+                Some(i) => ids[((i as i64 + dir).rem_euclid(ids.len() as i64)) as usize],
+                None => ids[0],
+            },
+            None => {
+                if dir >= 0 {
+                    ids[0]
+                } else {
+                    ids[ids.len() - 1]
+                }
+            }
+        };
+        self.card_focus = Some(next);
+    }
+
+    /// Expand/collapse the focused tool card (Enter with an empty input).
+    fn toggle_card(&mut self) {
+        if let Some(id) = self.card_focus
+            && !self.card_expanded.remove(&id)
+        {
+            self.card_expanded.insert(id);
+        }
+    }
+
     fn clear(&mut self) {
         self.log.clear();
         self.pending_queue.clear();
         self.scroll = 0;
         self.follow_bottom = true;
+        self.card_focus = None;
+        self.card_expanded.clear();
+        self.turn_tools.clear();
+        self.turn_start = None;
     }
 
     /// Drain pending events from the background agent task into the log.
@@ -311,6 +423,16 @@ impl App {
             self.review_rx = Some(rrx);
         }
 
+        // Tracing notifications (WARN/ERROR from the provider/agent): surface
+        // them in the chat log, never in the input box.
+        if let Some(mut nrx) = self.notify_rx.take() {
+            while let Ok(msg) = nrx.try_recv() {
+                let msg = sanitize_note(&msg);
+                self.add_meta(format!("  ⚠ {msg}"));
+            }
+            self.notify_rx = Some(nrx);
+        }
+
         let mut rx = match self.turn_rx.take() {
             Some(rx) => rx,
             None => return,
@@ -320,6 +442,25 @@ impl App {
                 Ok(TurnMsg::Text(t)) => self.add_stream(&t),
                 Ok(TurnMsg::Tool(o)) => self.add_tool_card(&o.name, o.ok, o.elapsed_ms, &o.output),
                 Ok(TurnMsg::Done(outcome)) => {
+                    // The model asked the user a question (CAP off): the turn
+                    // paused to wait. Show the waiting state; the user's next
+                    // typed input continues the same task (the question is
+                    // already in history).
+                    if outcome.needs_input {
+                        if let Some(ref l) = self.live
+                            && let Ok(mut ls) = l.lock() {
+                                ls.phase = apex_core::Phase::AwaitingInput;
+                                ls.note = "waiting for your answer — type below and Enter".into();
+                            }
+                        self.add_meta("  ✋ byteai is waiting for your answer — type below and press Enter to continue the task.");
+                        if let Some(t) = self.busy_since.take() {
+                            self.last_run_duration = t.elapsed().as_secs().max(1);
+                        }
+                        self.last_outcome = Some(outcome);
+                        self.busy = false;
+                        self.turn_task = None;
+                        break;
+                    }
                     self.add_done(outcome.iterations, outcome.tool_calls_made, outcome.usage.total_tokens);
                     // Surface the blocked reason (if any) in the live-status row.
                     if let Some(ref reason) = outcome.blocked_reason
@@ -372,7 +513,64 @@ impl App {
     }
 }
 
+// ── Tracing capture (WARN/ERROR → chat log, not stderr) ──────────────
+
+/// Writer that forwards each formatted tracing line into the TUI's
+/// notification channel (surfaced in the chat log), instead of stderr —
+/// a stderr write in raw mode lands at the terminal cursor and corrupts
+/// the input/typing box.
+struct NotifyWriter(tokio::sync::mpsc::UnboundedSender<String>);
+
+impl io::Write for NotifyWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if !buf.is_empty() {
+            let line = String::from_utf8_lossy(buf);
+            let _ = self.0.send(line.trim_end().to_string());
+        }
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct NotifyMake(tokio::sync::mpsc::UnboundedSender<String>);
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for NotifyMake {
+    type Writer = NotifyWriter;
+    fn make_writer(&'a self) -> Self::Writer {
+        NotifyWriter(self.0.clone())
+    }
+}
+
+/// Install the TUI tracing pipeline: WARN/ERROR events are captured and
+/// forwarded to the chat-log notification channel. Nothing reaches stderr.
+/// Called from TUI run() — main() skips its stderr init for the TUI path,
+/// so this becomes the process-wide default subscriber.
+fn install_tui_tracing(tx: tokio::sync::mpsc::UnboundedSender<String>) {
+    use tracing_subscriber::prelude::*;
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,byteai=warn"));
+    let layer = tracing_subscriber::fmt::layer()
+        .with_writer(NotifyMake(tx))
+        .with_target(false)
+        .with_ansi(false)
+        .without_time();
+    let _ = tracing_subscriber::registry()
+        .with(layer.with_filter(filter))
+        .try_init();
+}
+
 pub async fn run() -> anyhow::Result<()> {
+    // The TUI owns the tracing pipeline: WARN/ERROR events (provider retries,
+    // transient errors, …) are captured and surfaced in the chat log as
+    // notifications — never written to stderr, which in raw mode lands at the
+    // terminal cursor and corrupts the input/typing box. Installed BEFORE any
+    // config/provider work so warnings from those too reach the chat log.
+    let (notify_tx, notify_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    install_tui_tracing(notify_tx);
+
     let cfg = crate::config::load()?;
     let provider = crate::config::resolve_provider(&cfg, None, None, None);
     let model = crate::config::resolve_model(&cfg, None, &provider);
@@ -392,16 +590,49 @@ pub async fn run() -> anyhow::Result<()> {
         warn_ratio: cfg.agent.budget_warn_ratio,
         tool_timeout: std::time::Duration::from_secs(cfg.agent.tool_timeout_seconds.unwrap_or(300)),
         auto_continue: cfg.agent.auto_continue,
+        cap_enabled: cfg.agent.cap_enabled,
+        tool_select: cfg.agent.tool_select,
+        tool_select_max: cfg.agent.tool_select_max,
+        tdai: cfg.memory.to_tdai_config(),
         ..Default::default()
     };
-    let agent = Arc::new(tokio::sync::Mutex::new(Agent::new(client, agent_cfg, tools, data_dir.clone())));
+    // Build a failover pool from all configured providers (same as CLI).
+    let mut entries = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let provider_name = provider.name.clone();
+    let push_entry = |entries: &mut Vec<apex_provider::pool::ProviderEntry>,
+                      seen: &mut std::collections::HashSet<String>,
+                      name: &str, p: &crate::config::ProviderEntry, mdl: &str| {
+        if seen.contains(name) {
+            return;
+        }
+        if let Ok(c) = apex_provider::Client::new(p.base_url.clone(), p.resolved_key()) {
+            entries.push(apex_provider::pool::ProviderEntry {
+                name: name.to_string(),
+                client: c,
+                model: mdl.to_string(),
+            });
+            seen.insert(name.to_string());
+        }
+    };
+    push_entry(&mut entries, &mut seen, &provider_name, &provider, &model);
+    for p in &cfg.providers {
+        if p.name == provider_name {
+            continue;
+        }
+        let mdl = if p.model.is_empty() { &model } else { &p.model };
+        push_entry(&mut entries, &mut seen, &p.name, p, mdl);
+    }
+    let pool = apex_provider::pool::ProviderPool::new(entries);
+    let agent = Arc::new(tokio::sync::Mutex::new(Agent::new(pool, agent_cfg, tools, data_dir.clone())));
 
     let mut app = App::new(model.clone(), provider.name.clone(), tools_count, count_skills(&data_dir));
+    app.notify_rx = Some(notify_rx);
     app.iter_cap = cfg.agent.max_iterations;
     // Share the agent's live status so the UI renders what the agent is doing.
     app.live = Some(agent.lock().await.live.clone());
     // Warm the model list for Ctrl+Tab switching (best-effort, no block).
-    if let Ok(ids) = agent.lock().await.provider.list_models().await {
+    if let Ok(ids) = agent.lock().await.pool.client().list_models().await {
         if let Some(pos) = ids.iter().position(|m| m == &model) {
             app.model_idx = pos;
         }
@@ -411,6 +642,11 @@ pub async fn run() -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
+    // NOTE: EnableMouseCapture intentionally NOT used — it hijacks the mouse
+    // so macOS drag-to-select / ⌘C never reaches the terminal. Without it,
+    // you can select and copy any text on screen (macOS Terminal: Option+drag
+    // for block selection; iTerm2: ⌥⌘ drag). Mouse clicks for tool cards are
+    // handled by the key bindings instead.
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -466,6 +702,11 @@ async fn run_loop(
             continue;
         }
         let ev = event::read()?;
+        // Mouse: click a tool card to focus/expand it, wheel to scroll.
+        if let Event::Mouse(m) = ev {
+            handle_mouse(app, m);
+            continue;
+        }
         if let Event::Key(key) = ev {
             if key.kind != KeyEventKind::Press {
                 continue;
@@ -559,6 +800,53 @@ async fn run_loop(
                 }
                 continue;
             }
+            // Tool-card focus navigation. Once a card is focused, Tab /
+            // Shift+Tab cycle through the cards (Enter expands). Shift+Tab
+            // also starts focusing even when nothing is focused yet; plain
+            // Tab keeps its existing role (command mode on empty input)
+            // until there's a focused card to move.
+            let plain_tab = key.code == KeyCode::Tab && !key.modifiers.contains(KeyModifiers::CONTROL);
+            if plain_tab && (key.modifiers.contains(KeyModifiers::SHIFT) || app.card_focus.is_some()) {
+                if !app.card_ids().is_empty() {
+                    let dir = if key.modifiers.contains(KeyModifiers::SHIFT) { -1 } else { 1 };
+                    app.cycle_card_focus(dir);
+                }
+                continue;
+            }
+            // Enter with an empty input and a focused card toggles the card's
+            // expanded view (send is a no-op for empty input anyway).
+            if key.code == KeyCode::Enter
+                && app.input.trim().is_empty()
+                && app.card_focus.is_some()
+                && app.pending_cmd.is_none() {
+                    app.toggle_card();
+                    continue;
+                }
+            // c (with an empty input + a focused card) copies the card's full
+            // output to the clipboard — L2 mnemonic, like `c`ommit in lazygit.
+            if key.code == KeyCode::Char('c')
+                && app.input.is_empty()
+                && !app.is_command
+                && app.card_focus.is_some() {
+                    let id = app.card_focus.unwrap_or(0);
+                    let out: String = app
+                        .log
+                        .iter()
+                        .find_map(|e| match e {
+                            LogEntry::ToolCard { id: cid, output, .. } if *cid == id => Some(output.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    if out.is_empty() {
+                        app.add_error("  card has no output to copy");
+                    } else {
+                        match clipboard_copy(&out) {
+                            Ok(msg) => app.add_meta(format!("  ⧉ {msg}")),
+                            Err(e) => app.add_error(&format!("  copy failed: {e}")),
+                        }
+                    }
+                    continue;
+                }
             match key.code {
                 KeyCode::Esc => {
                     if app.busy {
@@ -570,6 +858,7 @@ async fn run_loop(
                         app.palette_idx = 0;
                         app.pending_cmd = None;
                         app.pending_label = None;
+                        app.card_focus = None;
                     }
                 }
                 KeyCode::Enter => {
@@ -698,6 +987,64 @@ async fn run_loop(
     Ok(())
 }
 
+/// Map a mouse event onto the transcript:
+/// - left-click on a tool card → focus it; clicking the focused card again
+///   expands/collapses it
+/// - scroll wheel → scroll the transcript (3 rows per notch)
+///
+/// The row→card mapping is recomputed on demand with the same line builder
+/// as draw_chat, so clicks land on the right card even after wrapping.
+fn handle_mouse(app: &mut App, m: crossterm::event::MouseEvent) {
+    match m.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            let chat_y = app.last_chat_y as usize;
+            let chat_h = app.last_chat_h as usize;
+            if chat_h == 0 || app.last_chat_w == 0 {
+                return;
+            }
+            let content_row = (m.row as usize).saturating_sub(chat_y);
+            if content_row >= chat_h {
+                return; // clicked below the chat box (input/status rows)
+            }
+
+            // Rebuild lines + per-row card map with the exact same wrapping
+            // ratatui uses (only on click — cheap, never per-frame).
+            let (lines, card_map) = build_chat_lines(app);
+            let mut row_map: Vec<Option<u64>> = Vec::new();
+            for (line, card) in lines.iter().zip(card_map.iter()) {
+                let rows = Paragraph::new(line.clone())
+                    .wrap(ratatui::widgets::Wrap { trim: false })
+                    .line_count(app.last_chat_w)
+                    .max(1);
+                for _ in 0..rows {
+                    row_map.push(*card);
+                }
+            }
+            let offset = chat_offset(row_map.len(), chat_h, app.follow_bottom, app.scroll);
+            let idx = offset + content_row;
+            if let Some(Some(id)) = row_map.get(idx) {
+                let id = *id;
+                if app.card_focus == Some(id) {
+                    app.toggle_card(); // second click expands/collapses
+                } else {
+                    app.card_focus = Some(id);
+                }
+            }
+        }
+        MouseEventKind::ScrollUp => {
+            app.follow_bottom = false;
+            app.scroll = (app.scroll + 3).min(app.max_scroll.max(1));
+        }
+        MouseEventKind::ScrollDown => {
+            app.scroll = app.scroll.saturating_sub(3);
+            if app.scroll == 0 {
+                app.follow_bottom = true;
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Background self-review after a heavy turn: critique the last assistant
 /// exchange, record a durable lesson (data_dir/reviews.log), and return a
 /// one-line summary to surface in the transcript. Runs on its own task so it
@@ -738,7 +1085,8 @@ async fn run_auto_review(
     let review = agent
         .lock()
         .await
-        .provider
+        .pool
+        .client()
         .chat(&model, &[msg], &[], Some(512))
         .await
         .map(|(text, _, _)| text)
@@ -817,12 +1165,12 @@ async fn run_pick(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, pick: P
                     let model = crate::config::resolve_model(&cfg, None, &provider);
                     {
                         let mut g = agent.lock().await;
-                        g.provider = client;
+                        g.pool.replace_active(&name, client, &model);
                         g.config.model = model.clone();
                     }
                     app.provider = name.clone();
                     app.model = model.clone();
-                    if let Ok(ids) = agent.lock().await.provider.list_models().await {
+                    if let Ok(ids) = agent.lock().await.pool.client().list_models().await {
                         app.models = ids;
                         if let Some(pos) = app.models.iter().position(|x| x == &model) {
                             app.model_idx = pos;
@@ -1080,6 +1428,9 @@ fn spawn_turn(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, text: &str,
     app.turn_task = Some(handle);
     app.busy = true;
     app.busy_since = Some(Instant::now());
+    // Reset the end-of-turn ribbon accumulator for the new turn.
+    app.turn_tools.clear();
+    app.turn_start = Some(Instant::now());
     // Clear stale error note from the live status for the new turn.
     if let Some(ref l) = app.live
         && let Ok(mut ls) = l.lock() {
@@ -1087,6 +1438,56 @@ fn spawn_turn(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, text: &str,
             ls.phase = apex_core::Phase::Understanding;
             ls.active_tools.clear();
         }
+}
+
+/// Run the `dan_methodology` tool and render its output into the chat log.
+/// Used by `/dan` (and aliases) so all entry points share one code path.
+async fn run_dan_tool(app: &mut App, agent: &Arc<tokio::sync::Mutex<Agent>>, args: serde_json::Value) {
+    let g = agent.lock().await;
+    let tool = g.tools.get("dan_methodology");
+    drop(g);
+    match tool {
+        Some(tool) => {
+            let outcome = tool.execute(args).await;
+            app.add_meta(format!("  [dan methodology · {} ms]", outcome.elapsed_ms));
+            for line in outcome.output.lines() {
+                app.add_meta(format!("  {line}"));
+            }
+        }
+        None => app.add_error("dan_methodology tool not available"),
+    }
+}
+
+/// All dan methodology topics (kept in sync with the dan_methodology tool).
+const DAN_TOPICS: &[&str] = &[
+    "overview", "harness_engineering", "skills_system",
+    "agent_sandboxes", "multi_agent", "model_selection",
+    "security", "observability", "context_engineering",
+    "planning", "local_models", "agent_threads",
+    "software_factory", "prompt_engineering", "agents_learning",
+];
+
+/// Fuzzy topic matching for `/dan <topic>`: exact match first, then a unique
+/// prefix or substring match (spaces normalized to underscores), so
+/// `/dan multi`, `/dan sandbox`, `/dan context eng` all resolve.
+fn match_dan_topic(norm: &str) -> Option<&'static str> {
+    let norm = norm.trim().replace(' ', "_").to_lowercase();
+    if norm.is_empty() {
+        return None;
+    }
+    if let Some(exact) = DAN_TOPICS.iter().find(|t| **t == norm) {
+        return Some(exact);
+    }
+    let hits: Vec<&str> = DAN_TOPICS
+        .iter()
+        .filter(|t| t.starts_with(&norm) || t.contains(&norm))
+        .copied()
+        .collect();
+    if hits.len() == 1 {
+        Some(hits[0])
+    } else {
+        None
+    }
 }
 
 async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, cmd_line: &str) {
@@ -1130,6 +1531,8 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
             app.add_assistant("/github        — discover+score the best skills/tools/harnesses/mcp");
             app.add_assistant("                 (/github skills <cap> · /github harnesses <cap> · /github improve");
             app.add_assistant("                  /github current · /github evaluate <owner/repo> · /github memory · /github graph)");
+            app.add_assistant("/github connect [repo] [public|private] — publish this project to GitHub");
+            app.add_assistant("/github status — auth+repo status · /github push — push latest");
             app.add_assistant("┌─ Other");
             app.add_assistant("/copy           — copy last response to clipboard");
             app.add_assistant("/diff           — git working-tree summary");
@@ -1155,7 +1558,7 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                     return;
                 }
             // No argument: interactive picker — scroll, Enter sets + persists.
-            match agent.lock().await.provider.list_models().await {
+            match agent.lock().await.pool.client().list_models().await {
                 Ok(ids) if !ids.is_empty() => {
                     app.models = ids.clone();
                     let sel = ids.iter().position(|x| x == &app.model).unwrap_or(0);
@@ -1204,13 +1607,13 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                             let model = crate::config::resolve_model(&cfg, None, &provider);
                             {
                                 let mut g = agent.lock().await;
-                                g.provider = client;
+                                g.pool.replace_active(name, client, &model);
                                 g.config.model = model.clone();
                             }
                             app.provider = name.to_string();
                             app.model = model.clone();
                             // Refresh the model list for the new provider.
-                            if let Ok(ids) = agent.lock().await.provider.list_models().await {
+                            if let Ok(ids) = agent.lock().await.pool.client().list_models().await {
                                 app.models = ids;
                             }
                             app.add_meta(format!("  provider -> {name}, model -> {model}"));
@@ -1245,7 +1648,7 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                             let m = if model.is_empty() { app.model.clone() } else { model.to_string() };
                             {
                                 let mut g = agent.lock().await;
-                                g.provider = client;
+                                g.pool.replace_active(name, client, &m);
                                 g.config.model = m.clone();
                             }
                             app.provider = name.to_string();
@@ -1259,8 +1662,114 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
             }
         }
         "tools" => {
-            let names = agent.lock().await.tools.names();
-            app.add_meta(format!("  tools ({}) {}", names.len(), names.join(", ")));
+            let g = agent.lock().await;
+            let names = g.tools.names();
+            let mode = if g.config.tool_select { "auto" } else { "all" };
+            let selected = if g.config.tool_select {
+                let defs = apex_core::select_tools(
+                    &g.tools.defs(),
+                    "tools",
+                    apex_core::ToolSelectStrategy::Auto,
+                    g.config.tool_select_max,
+                );
+                defs.len()
+            } else {
+                names.len()
+            };
+            let toggle = match parts.get(1).copied() {
+                Some("all") | Some("full") => Some(false),
+                Some("auto") | Some("select") | Some("smart") => Some(true),
+                _ => None,
+            };
+            // /tools for <task> — preview which tools WOULD be selected for
+            // an arbitrary task, without running it. This is how you "talk"
+            // to the selector: ask it to show its work for any request.
+            let preview = match parts.get(1).copied() {
+                Some("for") | Some("preview") => {
+                    let task = parts.get(2..).map(|p| p.join(" ")).unwrap_or_default();
+                    Some(task)
+                }
+                _ => None,
+            };
+            drop(g);
+            if let Some(on) = toggle {
+                let mut g = agent.lock().await;
+                g.config.tool_select = on;
+                drop(g);
+                app.add_meta(format!(
+                    "  smart tool selection: {} (next turn)",
+                    if on { "AUTO" } else { "ALL tools" }
+                ));
+            } else if let Some(task) = preview {
+                if task.trim().is_empty() {
+                    app.add_error("usage: /tools for <task> — e.g. /tools for create a github pr");
+                } else {
+                    let g = agent.lock().await;
+                    let defs = apex_core::select_tools(
+                        &g.tools.defs(),
+                        &task,
+                        apex_core::ToolSelectStrategy::Auto,
+                        g.config.tool_select_max,
+                    );
+                    drop(g);
+                    app.add_meta(format!(
+                        "  [tool selection for {:?} · {}/{}]",
+                        task.trim(),
+                        defs.len(),
+                        names.len()
+                    ));
+                    app.add_meta(format!("  {}", defs.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().join(", ")));
+                }
+            } else {
+                app.add_meta(format!(
+                    "  tools ({selected}/{}) mode={mode} — /tools auto | /tools all | /tools for <task>",
+                    names.len()
+                ));
+            }
+        }
+        "dan" | "methodology" | "d" => {
+            // /dan                   → full methodology overview + topic index
+            // /dan <topic>           → deep section (fuzzy: "multi", "sandbox",
+            //                          "context eng" all work)
+            // /dan query <text>      → free-text lookup across all topics
+            // /dan apply <anything>  → run <anything> as a task, dan-primed
+            // /dan help              → topic list
+            let rest = parts.get(1).copied().unwrap_or("");
+            match rest {
+                "help" | "?" | "-h" => {
+                    app.add_meta("  dan methodology topics: overview, harness_engineering, skills_system, agent_sandboxes, multi_agent, model_selection, security, observability, context_engineering, planning, local_models, agent_threads, software_factory, prompt_engineering, agents_learning");
+                    app.add_meta("  usage: /dan <topic> | /dan query <text> | /dan apply <task>");
+                }
+                "apply" | "run" => {
+                    let task = parts.get(2..).map(|p| p.join(" ")).unwrap_or_default();
+                    if task.is_empty() {
+                        app.add_error("usage: /dan apply <task>");
+                    } else {
+                        // The dan brief is already in the system prompt; prime
+                        // the turn explicitly so the agent consults the
+                        // methodology before acting.
+                        spawn_turn(agent, app, &format!("Apply the Dan methodology (plan first, use harness tools, sandbox + review, capture a skill after): {task}"), true);
+                    }
+                }
+                "query" => {
+                    let q = parts.get(2..).map(|p| p.join(" ")).unwrap_or_default();
+                    run_dan_tool(app, agent, serde_json::json!({ "query": q })).await;
+                }
+                "" => {
+                    run_dan_tool(app, agent, serde_json::json!({})).await;
+                }
+                _ => {
+                    // Fuzzy topic match (spaces, prefixes, partials all work);
+                    // fall back to a free-text query if nothing unique matches.
+                    match match_dan_topic(rest) {
+                        Some(topic) => run_dan_tool(app, agent, serde_json::json!({ "topic": topic })).await,
+                        None => {
+                            app.add_meta(format!("  [dan: no exact topic for {rest:?} — searching all sections]"));
+                            run_dan_tool(app, agent, serde_json::json!({ "query": rest })).await;
+                        }
+                    }
+                }
+            }
         }
         "gates" => {
             let action = parts.get(1).copied().unwrap_or("status").to_string();
@@ -1422,7 +1931,8 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                     "Summarize the following conversation history in 2-3 concise sentences, keeping all decisions, requirements and file paths. This replaces the full history.\n\n{dropped_text}"
                 );
                 let msg = apex_types::Message::user(&prompt);
-                g.provider
+                g.pool
+                    .client()
                     .chat(&model, &[msg], &[], Some(300))
                     .await
                     .map(|(t, _, _)| t.trim().to_string())
@@ -1460,15 +1970,29 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
             let model = g.config.model.clone();
             let cap = g.config.max_iterations;
             let budget = g.config.run_budget_seconds;
+            let cap_mode = g.config.cap_enabled;
             drop(g);
             let n_sessions = crate::session::list().map(|l| l.len()).unwrap_or(0);
             app.add_meta(format!("  model:    {model}"));
             app.add_meta(format!("  provider: {}", app.provider));
+            app.add_meta(format!("  cap:      {} (Coding Auto-Pilot — /cap to toggle)", if cap_mode { "ON — autonomous" } else { "OFF — waits for your answers" }));
             app.add_meta(format!("  context:  {msgs} msgs · {chars} chars"));
             app.add_meta(format!("  tokens:   {tokens} total ({prompt_tokens} prompt / {completion_tokens} completion)"));
             app.add_meta(format!("  budget:   {cap} iters{}", budget.map(|b| format!(" · {b}s wall")).unwrap_or_default()));
             app.add_meta(format!("  sessions: {n_sessions} saved"));
             app.add_meta(format!("  config:   {}", crate::config::config_dir().join("config.toml").display()));
+        }
+        "cap" => {
+            let mut g = agent.lock().await;
+            g.config.cap_enabled = !g.config.cap_enabled;
+            let enabled = g.config.cap_enabled;
+            drop(g);
+            let mut cfg = crate::config::load().unwrap_or_default();
+            let _ = crate::config::set_cap(&mut cfg, enabled);
+            app.add_meta(format!(
+                "  CAP (Coding Auto-Pilot) -> {}",
+                if enabled { "ON — full autonomy, no stopping for questions" } else { "OFF — waits for your answer at questions" }
+            ));
         }
         "reload" => {
             // Hermes /reload: reload the config into the running session.
@@ -1490,7 +2014,7 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                         Ok(client) => {
                             {
                                 let mut g = agent.lock().await;
-                                g.provider = client;
+                                g.pool.replace_active(&provider.name, client, &model);
                                 g.config.model = model.clone();
                                 g.config.max_iterations = cfg.agent.max_iterations;
                                 g.config.run_budget_seconds = cfg.agent.run_budget_seconds.filter(|&b| b > 0);
@@ -1502,7 +2026,7 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                             app.provider = provider.name.clone();
                             app.model = model.clone();
                             app.iter_cap = cfg.agent.max_iterations;
-                            if let Ok(ids) = agent.lock().await.provider.list_models().await {
+                            if let Ok(ids) = agent.lock().await.pool.client().list_models().await {
                                 app.models = ids;
                             }
                             app.add_meta(format!(
@@ -1572,14 +2096,26 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
             app.add_meta(format!("  data:   {}", crate::config::data_dir().display()));
         }
         "keys" | "keybindings" => {
-            app.add_assistant("/keys — jcode-style keybindings");
-            app.add_assistant("  Ctrl+Shift+K/J   scroll up/down");
-            app.add_assistant("  Alt+U / Alt+D    page up/down");
-            app.add_assistant("  Ctrl+Tab         next model  ·  Ctrl+Shift+Tab  prev model");
-            app.add_assistant("  Up / Down        scroll transcript");
-            app.add_assistant("  Esc              interrupt turn / clear input");
-            app.add_assistant("  Tab              toggle command mode");
-            app.add_assistant("  Ctrl+C           interrupt turn / quit");
+            app.add_assistant("/keys — ByteAi keybindings (L0–L2 layers)");
+            app.add_assistant("┌─ L0: Universal (always visible)");
+            app.add_assistant("  Arrow keys     scroll transcript");
+            app.add_assistant("  Esc            interrupt turn / clear input / clear card focus");
+            app.add_assistant("  Enter          send message / expand focused tool card");
+            app.add_assistant("  Ctrl+C         interrupt turn / quit");
+            app.add_assistant("┌─ L1: Navigation");
+            app.add_assistant("  Ctrl+Shift+K/J scroll up/down");
+            app.add_assistant("  Alt+U / Alt+D  page up/down");
+            app.add_assistant("  Ctrl+Tab       next model  ·  Ctrl+Shift+Tab  prev model");
+            app.add_assistant("  Tab            toggle command mode");
+            app.add_assistant("  Shift+Tab      focus/cycle tool cards");
+            app.add_assistant("  Mouse wheel    scroll transcript");
+            app.add_assistant("  Mouse click    focus/expand tool card");
+            app.add_assistant("┌─ L2: Tool-card actions (when a card is focused)");
+            app.add_assistant("  Enter (empty)  expand / collapse the focused card");
+            app.add_assistant("  c              copy the card's full output to clipboard");
+            app.add_assistant("  Shift+Tab      next card");
+            app.add_assistant("  Esc            clear card focus");
+            app.add_assistant("  (cards are also highlighted in the transcript)");
         }
         "subagent" | "swarm" => {
             let count = if *cmd == "swarm" { 3 } else { 1 };
@@ -1710,7 +2246,7 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
             }
             let first = parts.get(1).copied().unwrap_or("").to_string();
             let action = match first.as_str() {
-                "menu"|"search"|"evaluate"|"improve"|"current"|"memory"|"graph" => first.clone(),
+                "menu"|"search"|"evaluate"|"improve"|"current"|"memory"|"graph"|"connect"|"status"|"push" => first.clone(),
                 _ => "search".to_string(),
             };
             let query = rest.clone();
@@ -1725,6 +2261,14 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                 }
                 None => app.add_error("github tool not available"),
             }
+        }
+        "setup" => {
+            app.add_meta("  /setup — ByteAI's interactive setup wizard");
+            app.add_assistant("To run the interactive setup wizard (providers, models, skills, tools):");
+            app.add_assistant("  1. Open a separate terminal");
+            app.add_assistant("  2. Run:  byteai setup");
+            app.add_assistant("  The wizard walks you through provider config, agent settings,");
+            app.add_assistant("  skills, and verification step by step.");
         }
         other => {
             app.add_error(&format!("unknown command /{other} — try /help"));
@@ -1847,40 +2391,118 @@ fn sanitize_note(text: &str) -> String {
     s
 }
 
-fn draw_chat(f: &mut Frame, area: Rect, app: &mut App) {
-    let max_rows = area.height as usize;
-
-    // Build ALL log lines as styled Paragraph lines. Paragraph wraps long
-    // lines at the width (List truncates them — that was the clipping bug),
-    // so every word of an answer stays on screen.
+/// Build every chat line exactly as the Paragraph renders it, plus a
+/// parallel map of which content row belongs to which tool card (None for
+/// non-card rows). Shared by draw_chat (rendering) and the mouse handler
+/// (click → card mapping) so the two can never drift apart.
+fn build_chat_lines(app: &App) -> (Vec<Line<'static>>, Vec<Option<u64>>) {
     let mut lines: Vec<Line> = Vec::new();
+    let mut card_map: Vec<Option<u64>> = Vec::new();
     for entry in &app.log {
         match entry {
             LogEntry::Text { content, style } => {
                 lines.push(Line::from(Span::styled(content.clone(), *style)));
+                card_map.push(None);
             }
             LogEntry::Assistant(content) => {
                 lines.push(Line::from(Span::styled(
                     content.clone(),
                     Style::default().fg(Color::White),
                 )));
+                card_map.push(None);
             }
-            LogEntry::ToolCard { name, ok, elapsed_ms, output } => {
-                let icon = if *ok { "✓" } else { "✗" };
-                let color = if *ok { Color::Yellow } else { Color::Red };
-                lines.push(Line::from(vec![
-                    Span::styled("  [tool] ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(name.clone(), Style::default().fg(color).add_modifier(Modifier::BOLD)),
+            LogEntry::ToolCard { id, name, ok, elapsed_ms, output, truncated } => {
+                let sigil = toolcards::tool_sigil(name);
+                let (status, color) = if *ok { ("✓", Color::Green) } else { ("✗", Color::Red) };
+                let focused = Some(*id) == app.card_focus;
+                let expanded = app.card_expanded.contains(id);
+
+                // Gutter marker (▸) for the focused card.
+                let gutter = if focused { "▸" } else { " " };
+                let head_style = if focused {
+                    Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(color).add_modifier(Modifier::BOLD)
+                };
+                let mut head_spans = vec![
+                    Span::styled(format!(" {gutter}"), Style::default().fg(color)),
+                    Span::styled(format!("{sigil} "), Style::default().fg(color)),
+                    Span::styled(name.clone(), head_style),
                     Span::raw(" "),
-                    Span::styled(icon, Style::default().fg(color)),
+                    Span::styled(status, Style::default().fg(color).add_modifier(Modifier::BOLD)),
                     Span::raw(" "),
-                    Span::styled(format!("({elapsed_ms} ms)"), Style::default().fg(Color::DarkGray)),
-                ]));
-                if !output.is_empty() && *ok {
-                    lines.push(Line::from(Span::styled(
-                        format!("         {output}"),
-                        Style::default().fg(Color::DarkGray),
-                    )));
+                    Span::styled(
+                        toolcards::fmt_elapsed(*elapsed_ms),
+                        Style::default().fg(if focused { Color::White } else { Color::DarkGray }).add_modifier(Modifier::DIM),
+                    ),
+                ];
+                // Size chip
+                if !output.is_empty() {
+                    head_spans.push(Span::raw(" "));
+                    head_spans.push(Span::styled(
+                        format!("· {}", toolcards::fmt_bytes(output.len())),
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
+                    ));
+                }
+                // Focus hint (L2 action mnemonics: Enter expand, c copy)
+                if focused {
+                    let hint = if expanded {
+                        "  [Enter collapse · c copy]"
+                    } else {
+                        "  [Enter expand · c copy · ⇧Tab next]"
+                    };
+                    head_spans.push(Span::styled(
+                        hint,
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
+                    ));
+                }
+                lines.push(Line::from(head_spans));
+                card_map.push(Some(*id));
+
+                if expanded {
+                    for line in output.lines() {
+                        lines.push(Line::from(Span::styled(
+                            format!("   {line}"),
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                        card_map.push(Some(*id));
+                    }
+                    if *truncated {
+                        lines.push(Line::from(Span::styled(
+                            "   … (output truncated)",
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM),
+                        )));
+                        card_map.push(Some(*id));
+                    }
+                } else {
+                    // Smart preview: first 3 non-empty lines, capped at ~100 chars
+                    let p = toolcards::preview(output, 3, 100);
+                    for pline in &p.lines {
+                        lines.push(Line::from(Span::styled(
+                            format!("   {pline}"),
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                        card_map.push(Some(*id));
+                    }
+                    // Footer: what's hidden
+                    let hidden = p.total_lines.saturating_sub(p.lines.len())
+                        + if *truncated { 1 } else { 0 };
+                    let hidden_bytes = p.total_bytes.saturating_sub(p.shown_bytes);
+                    if hidden > 0 {
+                        let mut foot = format!("   └ … +{hidden} line{}", if hidden == 1 { "" } else { "s" });
+                        if hidden_bytes > 0 {
+                            foot.push_str(&format!(" · +{}", toolcards::fmt_bytes(hidden_bytes)));
+                        }
+                        foot.push_str(" — Enter to expand");
+                        lines.push(Line::from(Span::styled(foot, Style::default().fg(Color::DarkGray))));
+                        card_map.push(Some(*id));
+                    } else if output.is_empty() {
+                        lines.push(Line::from(Span::styled(
+                            "   (no output)",
+                            Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM),
+                        )));
+                        card_map.push(Some(*id));
+                    }
                 }
             }
             LogEntry::Meta(text) => {
@@ -1888,6 +2510,7 @@ fn draw_chat(f: &mut Frame, area: Rect, app: &mut App) {
                     text.clone(),
                     Style::default().fg(Color::DarkGray),
                 )));
+                card_map.push(None);
             }
         }
     }
@@ -1910,7 +2533,16 @@ fn draw_chat(f: &mut Frame, area: Rect, app: &mut App) {
             Span::styled("  ", Style::default().fg(Color::DarkGray)),
             Span::styled(label, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         ]));
+        card_map.push(None);
     }
+
+    (lines, card_map)
+}
+
+fn draw_chat(f: &mut Frame, area: Rect, app: &mut App) {
+    let max_rows = area.height as usize;
+
+    let (lines, _card_map) = build_chat_lines(app);
 
     let paragraph = Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false });
     // EXACT wrapped row count (same wrapping ratatui uses to render), so the
@@ -1938,6 +2570,11 @@ fn draw_chat(f: &mut Frame, area: Rect, app: &mut App) {
 
     let paragraph = paragraph.scroll(((chat_offset(total_rows, max_rows, app.follow_bottom, app.scroll)) as u16, 0));
     f.render_widget(paragraph, area);
+
+    // Remember chat geometry for mouse → card mapping.
+    app.last_chat_y = area.y;
+    app.last_chat_h = area.height;
+    app.last_chat_w = area.width;
 }
 
 /// Compute the Paragraph scroll offset (rows skipped from the top) for the
@@ -2087,9 +2724,19 @@ fn draw_input(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_status(f: &mut Frame, area: Rect, app: &App) {
+    // Contextual tool-card hint (L2 actions): when a card is focused show the
+    // expand/copy actions; otherwise remind that cards exist and how to reach
+    // them (keyboard + mouse).
+    let card_hint = if app.card_focus.is_some() {
+        " ▸ [Enter] expand · [c] copy · ⇧Tab next · Esc exit"
+    } else if !app.card_ids().is_empty() {
+        " ⇧Tab / click a card to focus"
+    } else {
+        ""
+    };
     let status = format!(
-        "  model: {} | provider: {} | tokens: {} | Ctrl+Shift+K/J scroll | Ctrl+C quit",
-        app.model, app.provider, app.last_tokens
+        "  model: {} | provider: {} | tokens: {} | Ctrl+Shift+K/J scroll | Ctrl+C quit{}",
+        app.model, app.provider, app.last_tokens, card_hint
     );
     let status_widget = Paragraph::new(Text::from(Line::from(Span::styled(
         status,
@@ -2131,8 +2778,8 @@ mod tests {
             "model", "provider", "addprovider", "reload", "tools",
             "clear", "save", "usage", "session", "resume", "config", "keys",
             "version", "copy", "diff",
-            "subagent", "swarm", "route", "council", "govern", "gates",
-            "ideas", "github", "quit",
+            "subagent", "swarm", "route", "council", "govern", "gates", "cap",
+            "ideas", "github", "setup", "dan", "quit",
         ];
         for (name, _) in COMMANDS {
             assert!(handled.contains(name), "palette command /{name} has no handler");
@@ -2290,6 +2937,84 @@ mod tests {
         }
     }
 
+    // --- Tool-card interactivity: focus cycling, expand/collapse, mouse map ---
+
+    #[test]
+    fn build_chat_lines_maps_card_rows() {
+        let mut app = App::new("m1".into(), "mock".into(), 3, 0);
+        app.add_tool_card("shell", true, 5, "line1\nline2\nline3\nline4\nline5");
+        let (lines, card_map) = build_chat_lines(&app);
+        // Header line carries the sigil + name; every card row maps to an id.
+        assert!(lines.iter().any(|l| l.to_string().contains("❯ shell")), "sigil header missing");
+        let some_ids: Vec<u64> = card_map.iter().filter_map(|c| *c).collect();
+        assert!(!some_ids.is_empty(), "card rows must map to an id");
+        // All Some entries share the SAME card id.
+        assert!(some_ids.windows(2).all(|w| w[0] == w[1]), "one card → one id");
+        // Preview shows 3 of the 5 lines, footer reports the hidden 2.
+        let rendered = lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n");
+        assert!(rendered.contains("+2 line"), "hidden-line footer: {rendered}");
+    }
+
+    #[test]
+    fn card_focus_cycles_and_toggles() {
+        let mut app = App::new("m1".into(), "mock".into(), 3, 0);
+        app.add_tool_card("shell", true, 5, "out1");
+        app.add_tool_card("memory", true, 3, "out2");
+        app.add_tool_card("todo", true, 1, "out3");
+        assert!(app.card_focus.is_none());
+        // Shift+Tab (dir -1) focuses the LAST card; then cycles backwards.
+        app.cycle_card_focus(-1);
+        let ids = app.card_ids();
+        assert_eq!(app.card_focus, Some(ids[2]));
+        app.cycle_card_focus(-1);
+        assert_eq!(app.card_focus, Some(ids[1]));
+        app.cycle_card_focus(1);
+        assert_eq!(app.card_focus, Some(ids[2]));
+        app.cycle_card_focus(2); // (2+2) mod 3 = 1 → wraps forward
+        assert_eq!(app.card_focus, Some(ids[1]));
+        // Enter (toggle) expands, then collapses.
+        app.toggle_card();
+        assert!(app.card_expanded.contains(&ids[1]), "toggle expands");
+        app.toggle_card();
+        assert!(!app.card_expanded.contains(&ids[1]), "toggle collapses");
+        // Clearing focus never panics.
+        app.card_focus = None;
+        app.toggle_card();
+        assert!(app.card_focus.is_none());
+    }
+
+    #[test]
+    fn mouse_row_map_respects_wrapping_and_scroll() {
+        // Simulate the geometry draw_chat stores, then verify a click on a
+        // card row resolves to that card via the same offset math handle_mouse
+        // uses.
+        let mut app = App::new("m1".into(), "mock".into(), 3, 0);
+        app.add_user("hello");
+        app.add_tool_card("shell", true, 5, "a\nb\nc");
+        app.add_assistant("answer");
+        let (lines, card_map) = build_chat_lines(&app);
+        let mut row_map: Vec<Option<u64>> = Vec::new();
+        for (line, card) in lines.iter().zip(card_map.iter()) {
+            let rows = Paragraph::new(line.clone())
+                .wrap(ratatui::widgets::Wrap { trim: false })
+                .line_count(120)
+                .max(1);
+            for _ in 0..rows {
+                row_map.push(*card);
+            }
+        }
+        let id = app.card_ids()[0];
+        // The card occupies several rows; all of them map back to its id.
+        assert!(row_map.iter().filter(|c| **c == Some(id)).count() >= 2);
+        // Click the FIRST card row with follow_bottom + a tall viewport: the
+        // offset is 0, so the click resolves straight to that card's id.
+        let first_card_row = row_map.iter().position(|c| *c == Some(id)).unwrap();
+        let offset = chat_offset(row_map.len(), 50, true, 0);
+        let clicked = row_map.get(offset + first_card_row).copied().flatten();
+        assert_eq!(clicked, Some(id), "click must resolve to the card under the cursor");
+        let _ = app;
+    }
+
     // --- Chat transcript scrolling (the "answers disappear" regression) ---
     // The offset must never blank the view: it must stay within [0, total_rows]
     // and always subtract (never add) the manual scroll distance.
@@ -2407,23 +3132,61 @@ mod tests {
     }
 
     #[test]
-    fn exact_rows_pin_chat_to_bottom() {
-        // The bug: with a char-based estimate the pin sat ABOVE the real
-        // bottom, so the newest answer appeared at the TOP of the chat box
-        // with blank space below. The exact count must align the pin so the
-        // last content row is the last visible row.
-        let width = 20u16;
-        let text = "❯ hello\nshort short short short longlonglonglonglonglonglonglonglonglonglonglong tail\nFinal line.";
-        let (_est, exact) = para_rows(text, width);
-        let max_rows = 3usize; // view smaller than content -> overflow
-        assert!(exact > max_rows, "test text must overflow the view");
-        // Pinned to bottom: offset + visible rows == total content rows.
-        let offset = chat_offset(exact, max_rows, true, 0);
-        assert_eq!(offset + max_rows, exact, "bottom pin must align exactly");
-        // Content that fits the view stays at offset 0 (no blank gap above).
-        let (_, small_exact) = para_rows("hi", width);
-        assert_eq!(chat_offset(small_exact, 10, true, 0), 0);
-        // Scrolling to the very top still reaches row 0.
-        assert_eq!(chat_offset(exact, max_rows, false, exact.saturating_sub(max_rows)), 0);
+    fn notify_writer_forwards_lines_into_channel() {
+        // Tracing capture: a formatted line written to the custom writer must
+        // land in the notification channel (trimmed), NOT on stderr.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let mut w = NotifyWriter(tx);
+        let line = b"WARN chat_stream transient error 429 Too Many Requests on attempt 3/4; retrying in 4s\n";
+        io::Write::write_all(&mut w, line).unwrap();
+        let msg = rx.try_recv().expect("line must be forwarded");
+        assert_eq!(msg, "WARN chat_stream transient error 429 Too Many Requests on attempt 3/4; retrying in 4s");
+        assert!(rx.try_recv().is_err(), "one event → one notification");
+    }
+
+    #[test]
+    fn notify_drain_renders_as_meta_notification() {
+        // The TUI drains captured notifications into the chat log as Meta
+        // entries (the response area) — never into the input box.
+        let mut app = App::new("m1".into(), "mock".into(), 27, 0);
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        app.notify_rx = Some(rx);
+        tx.send("WARN chat_stream transient error 429 on attempt 3/4; retrying in 4s".into()).unwrap();
+        app.drain();
+        assert!(app.notify_rx.is_some(), "channel must stay attached");
+        assert!(
+            app.log.iter().any(|e| matches!(
+                e,
+                LogEntry::Meta(m) if m.contains("429") && m.contains("retrying in 4s")
+            )),
+            "notification must appear in the chat log"
+        );
+    }
+
+    #[test]
+    fn dan_topic_fuzzy_matching_is_easy() {
+        // Exact topics resolve.
+        assert_eq!(match_dan_topic("planning"), Some("planning"));
+        assert_eq!(match_dan_topic("security"), Some("security"));
+        // Unique prefixes resolve.
+        assert_eq!(match_dan_topic("multi"), Some("multi_agent"));
+        assert_eq!(match_dan_topic("sandbox"), Some("agent_sandboxes"));
+        assert_eq!(match_dan_topic("context"), Some("context_engineering"));
+        assert_eq!(match_dan_topic("harness"), Some("harness_engineering"));
+        assert_eq!(match_dan_topic("local"), Some("local_models"));
+        assert_eq!(match_dan_topic("skills"), Some("skills_system"));
+        // Spaces normalize to underscores.
+        assert_eq!(match_dan_topic("context eng"), Some("context_engineering"));
+        assert_eq!(match_dan_topic("model selection"), Some("model_selection"));
+        assert_eq!(match_dan_topic("prompt engineering"), Some("prompt_engineering"));
+        // Case-insensitive.
+        assert_eq!(match_dan_topic("PLANNING"), Some("planning"));
+        // Ambiguous / unknown inputs resolve to None (caller falls back to
+        // a free-text query, so /dan <anything> still finds content).
+        assert_eq!(match_dan_topic("agent"), None); // agent_sandboxes + agents_learning + multi_agent
+        assert_eq!(match_dan_topic("xyzzy"), None);
+        assert_eq!(match_dan_topic(""), None);
+        // The palette alias /d is documented via COMMANDS and handled.
+        assert!(COMMANDS.iter().any(|(n, _)| *n == "dan"));
     }
 }

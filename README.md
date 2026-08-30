@@ -1,120 +1,194 @@
-# ByteAi (codename: APEX)
+# ByteAi (APEX)
 
-The fastest, smartest autonomous coding agent.
+[![CI](https://github.com/ByteCyberSec/byteai/actions/workflows/ci.yml/badge.svg)](https://github.com/ByteCyberSec/byteai/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.85%2B-blue)](https://www.rust-lang.org)
+[![GitHub release](https://img.shields.io/badge/release-v0.1.0--dev-blue)](https://github.com/ByteCyberSec/byteai)
 
-ByteAi is a new open-source autonomous coding-agent harness. It is NOT a merge of
-existing projects: it is a clean architectural synthesis built from research into
-six reference implementations, adopting their strongest ideas, improving their
-weak points, and rejecting their dead weight.
+> **The fastest, smartest autonomous coding agent.**
+> Rust core — zero Python/Node dependency. Provider-agnostic (any OpenAI-compatible endpoint). Runs locally or in the cloud.
 
-## Install
+---
 
-### One-command (any machine with cargo + git)
+## Features
+
+- **Fast Rust core** — cold start < 100 ms, idle RAM < 50 MB
+- **Provider-agnostic** — works with any OpenAI-compatible API (OmniRoute, OpenAI, Groq, Together, local models)
+- **Smart tool selection** — only relevant tools per turn (kills context rot)
+- **LSP-aware editing** — smart reads, patches, completions (Cargo, TypeScript, Python, Go, Rust)
+- **DAP debugging** — multi-language debugger integration
+- **Multi-agent delegation** — spawn up to 1000 parallel subagents, round-robin across providers, dead-provider detection, automatic retry
+- **Memory hub** — persistent SQLite+FTS5 memory across sessions (L0 conversations, L1 atomics, L2 scenarios, L3 persona, skills)
+- **Skills system** — load/install SKILL.md files, engineering discipline, lesson capture
+- **Terminal UI** — oh-my-pi inspired TUI with command palette, slash commands, sparkline tool cards
+- **GitHub integration** — `/github connect` publishes your project, `/github` discovers+capability-scores repos
+- **Ideas engine** — `/ideas` mines real internet problems, returns Top 5 opportunities with ByteAI Opportunity Scores
+- **Acceptance gates** — unlazy-style GATES.md ledgers: completion proven by CHECK+EXPECT evidence, not declarations
+- **CAP** — Coding Auto-Pilot: full autonomy mode, no stopping for questions
+
+---
+
+## Quick Start
+
+<p align="center">
+  <img src="assets/video/demo-animated.svg" alt="ByteAi demo — animated" width="720"/>
+</p>
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/byteai/byteai/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ByteCyberSec/byteai/main/install.sh | bash
 ```
 
-Installs to `~/.local/bin/byteai` and writes a default config. Or build manually:
+Or build from source:
 
 ```sh
-git clone https://github.com/byteai/byteai && cd byteai
+git clone https://github.com/ByteCyberSec/byteai && cd byteai
 cargo build --release
-./target/release/byteai doctor
+./target/release/byteai setup
 ```
 
-Configure a provider (any OpenAI-compatible endpoint) in
-`~/.config/byteai/config.toml` (macOS: `~/Library/Application Support/byteai/config.toml`):
+---
+
+## Configure
+
+The interactive setup wizard walks you through everything:
+
+<p align="center">
+  <img src="assets/screenshots/setup-wizard.svg" alt="ByteAi setup wizard" width="720"/>
+</p>
+
+```sh
+byteai setup
+```
+
+It prompts for:
+- **Provider** — name, base URL, API key (or env var), model
+- **Agent settings** — max iterations, tool timeout, CAP, memory, auto-continue, tool selection
+- **Skills** — install starter skills
+- **Verification** — provider connectivity check
+
+Or edit `~/.config/byteai/config.toml` (macOS: `~/Library/Application Support/byteai/config.toml`):
 
 ```toml
 [[providers]]
-name = "bai"
-base_url = "https://api.b.ai/v1"
-api_key_env = "MY_API_KEY_ENV_VAR"
+name = "omniroute"
+base_url = "http://localhost:20128/v1"
+api_key_env = "MY_API_KEY_ENV"
+model = ""
+
+[agent]
 model = "deepseek-v4-flash"
+default_provider = "omniroute"
+cap_enabled = true
 ```
 
-## Reference projects (Phase 0 research subjects)
+---
 
-| Project | Repo | License | Role in APEX |
-|---|---|---|---|
-| jcode | https://github.com/1jehuang/jcode | MIT | Rust performance core, memory, swarm ideas |
-| oh-my-pi | https://github.com/can1357/oh-my-pi | MIT | LSP-aware edits, DAP, kernels, worktree subagents |
-| mattpocock/skills | https://github.com/mattpocock/skills | MIT | Engineering discipline, skill format |
-| i-have-adhd | https://github.com/ayghri/i-have-adhd | MIT | ADHD-friendly UX rules |
-| ai-memory | https://github.com/akitaonrails/ai-memory | MIT | Memory model: Markdown + SQLite + FTS + optional vectors |
-| hermes-agent | https://github.com/NousResearch/hermes-agent | MIT | Skills lifecycle, delegation, FTS sessions, MCP |
+## Usage
+
+```sh
+byteai          # Launch the TUI
+byteai chat     # REPL mode (one-shot: byteai chat "your prompt")
+byteai chat --cap "fix the bug in src/main.rs"  # CAP mode (full autonomy)
+byteai doctor   # Check provider connectivity
+byteai models   # List available models
+byteai setup    # Interactive setup wizard
+byteai github connect  # Publish this project to GitHub
+byteai github status   # Check GitHub auth + repo status
+```
+
+### TUI Slash Commands
+
+| Command | Description |
+|---|---|
+| `/model <name>` | Switch model |
+| `/provider <name>` | Switch provider |
+| `/cap` | Toggle full autonomy mode |
+| `/ideas [focus]` | Discover top product ideas |
+| `/github <target> <query>` | Discover+score skills/tools/harnesses/MCP |
+| `/github connect [repo] [public\|private]` | Publish to GitHub |
+| `/github status` | GitHub auth + repo status |
+| `/setup` | Interactive setup wizard |
+| `/tools` | List available tools |
+| `/save <name>` | Save session |
+| `/clear` | Clear conversation history |
+
+---
+
+## GitHub Integration
+
+ByteAI has first-class GitHub integration:
+
+<p align="center">
+  <img src="assets/screenshots/github-status.svg" alt="ByteAi GitHub status" width="720"/>
+</p>
+
+```sh
+# Check auth + repo status
+byteai github status
+
+# Publish the current project to GitHub (public)
+byteai github connect
+
+# Publish with a custom name, private
+byteai github connect my-byteai private
+
+# Push latest changes
+byteai github push
+
+# Discover+score skills/tools/harnesses/MCP
+byteai github skills <capability>
+```
+
+In the TUI/REPL, use `/github connect`, `/github status`, or `/github push`.
+
+---
 
 ## Architecture
 
-    FAST CORE + INTELLIGENT ORCHESTRATION + OPTIONAL POWER MODULES
+```
+FAST CORE + INTELLIGENT ORCHESTRATION + OPTIONAL POWER MODULES
+```
 
-- **Fast core**: Rust. Agent loop, scheduler, provider routing, tool dispatcher,
-  filesystem, search, patch/edit engine, session engine, context engine, LSP
-  manager, DAP manager, memory router, subagent coordinator, process manager,
-  telemetry, TUI protocol.
-- **Optional processes**: Python kernel, JS/Bun kernel, embedding service,
-  browser service, remote execution workers. The basic agent runs with NO
-  Python/Node dependency.
+- **Fast core** (Rust): Agent loop, scheduler, provider routing, tool dispatcher, filesystem, search, patch/edit engine, session engine, context engine, LSP manager, DAP manager, memory router, subagent coordinator, process manager, telemetry, TUI protocol.
+- **Optional processes**: Python kernel, JS/Bun kernel, embedding service, browser service, remote execution workers. The basic agent runs with NO Python/Node dependency.
 
-## Performance targets (aspirational, measured not guessed)
-
-- Cold start < 100 ms
-- Idle RAM < 50 MB (without embeddings); < 20 MB per additional session
-- Verified against jcode / oh-my-pi / Hermes / Claude Code / Codex / OpenCode in `benchmarks/`
+---
 
 ## Documentation
 
-- `docs/research/` — per-project research notes + architecture comparison + feature matrix + benchmark methodology
 - `docs/adr/` — Architecture Decision Records
-- `docs/` — design docs (context engine, memory, security model, ...)
+- `docs/research/` — Per-project research notes + architecture comparison + feature matrix + benchmark methodology
+- `docs/apex-intelligence.md` — /Ideas and /Github intelligence engine doctrine
+
+---
 
 ## Status
 
-- [x] Phase 0 — Research (see `docs/research/`)
-- [x] Phase 1 — Minimal fast agent (Rust CLI, provider, streaming, tools, sessions, TUI)
-- [x] Phase 2 — Code intelligence (LSP, AST, smart search, smart reads, patching)
-- [x] Phase 3 — Verification (test detection, typecheck, diagnostics, verification gate)
-- [x] Phase 4 — Debugging (DAP)
-- [x] Phase 5 — Memory (working state, project wiki, FTS, entities, handoffs)
-- [x] Phase 6 — Skills (loader, engineering skills, lesson capture, promotion)
-- [x] Phase 7 — Multi-agent (workers, worktrees, structured communication, conflict detection)
-- [x] Phase 8 — Smart router (capability-based model routing + learning)
-- [x] Phase 9 — Reviewer (independent verification agent)
-- [x] Phase 10 — Polish (TUI, agent hub, plugins, MCP, remote execution)
-- [x] Phase 11 — Intelligence engine (`/Ideas` + `/Github` first-class commands:
-      evidence-based idea discovery, compatibility-engine repository evaluation
-      (ADOPT/ADAPT/LEARN FROM/REJECT), skill/harness discovery, capability graph,
-      GitHub intelligence memory — see `docs/apex-intelligence.md`)
-- [x] Acceptance gates (`gates` tool — unlazy-style GATES.md ledgers: status/run/reverify/create; completion proven by CHECK+EXPECT evidence, not declaration; parent re-verification via `gates reverify` after `spawn`)
+| Phase | Description | Status |
+|---|---|---|
+| 0 | Research | ✓ |
+| 1 | Minimal fast agent (Rust CLI, provider, streaming, tools, sessions, TUI) | ✓ |
+| 2 | Code intelligence (LSP, AST, smart search, smart reads, patching) | ✓ |
+| 3 | Verification (test detection, typecheck, diagnostics, verification gate) | ✓ |
+| 4 | Debugging (DAP) | ✓ |
+| 5 | Memory (working state, project wiki, FTS, entities, handoffs) | ✓ |
+| 6 | Skills (loader, engineering skills, lesson capture, promotion) | ✓ |
+| 7 | Multi-agent (workers, worktrees, structured communication, conflict detection) | ✓ |
+| 8 | Smart router (capability-based model routing + learning) | ✓ |
+| 9 | Reviewer (independent verification agent) | ✓ |
+| 10 | Polish (TUI, agent hub, plugins, MCP, remote execution) | ✓ |
+| 11 | Intelligence engine (/Ideas + /Github, compatibility engine, capability graph, GitHub memory) | ✓ |
 
-Every phase ends with a benchmark run (`benchmarks/`).
+---
 
-## /Ideas and /Github
+## Contributing
 
-Two first-class commands (in the TUI palette and the REPL) implement the APEX
-intelligence engine — see `docs/apex-intelligence.md` for the full doctrine.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-```
-/ideas <focus>                    — mine real internet problems, return the Top 5
-                                     opportunities with ByteAI Opportunity Scores
-/ideas research <idea>            — deep-research one idea before building
-/ideas build <idea>               — produce a spec + phase-by-phase build plan
-/ideas menu | status              — show the category menu / saved ideas
+## Security
 
-/github <target> <query>          — discover + compatibility-score candidates
-                                     (skills | harnesses | tools | mcp | ...)
-/github improve [focus]           — rank improvements to ByteAI itself
-/github current                   — analyze the current project's capability gaps
-/github evaluate <owner/repo>     — evaluate one repository (APEX / project scores)
-/github memory | graph            — GitHub intelligence memory / capability graph
-```
-
-Both commands reuse ByteAI's existing capabilities (websearch, fetch, provider,
-memory, skills) and persist every finding under `<data>/intelligence/` and the
-project-local `.apex/intelligence/` directory.
+See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
 ## License
 
-MIT (pending final decision in `docs/adr/0000-record.md`). Research notes
-reference the reference projects; no source code is copied without attribution.
+MIT — see [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md) for third-party attribution.

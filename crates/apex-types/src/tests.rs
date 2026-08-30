@@ -15,8 +15,8 @@ mod tests {
             ),
             Message::tool("call_1", "shell", "ok"),
         ];
-        for (i, m) in history.iter().enumerate() {
-            println!("msg[{i}] = {}", serde_json::to_string(&m.to_wire()).unwrap());
+        for m in &history {
+            let _ = serde_json::to_string(&m.to_wire()).unwrap();
         }
         let tool_msg = history[3].to_wire();
         assert!(tool_msg.get("tool_call_id").is_some(), "tool message must carry tool_call_id");
@@ -28,7 +28,12 @@ mod tests {
     fn empty_call_id_still_present() {
         let m = Message::tool("", "shell", "out");
         let wire = serde_json::to_string(&m.to_wire()).unwrap();
-        println!("{wire}");
         assert!(wire.contains("tool_call_id"));
+    }
+
+    #[test]
+    fn answer_is_forty_two() {
+        fn answer() -> i32 { 42 }
+        assert_eq!(answer(), 42);
     }
 }

@@ -86,7 +86,13 @@ impl Message {
         if let Some(c) = &self.content {
             m.insert("content".into(), serde_json::json!(c));
         } else if self.role == Role::Assistant {
-            m.insert("content".into(), Value::Null);
+            // DeepSeek thinking mode (and other reasoning proxies) REJECT
+            // `content: null` on assistant messages — it demands a string,
+            // even an empty one, so reasoning_content can be echoed back.
+            // A tool-round assistant message (tool_calls, no text) must
+            // therefore send `content: ""`, not null, or the provider 400s
+            // mid-turn ("The request is invalid").
+            m.insert("content".into(), serde_json::json!(""));
         }
         if let Some(tc) = &self.tool_calls {
             let wire: Vec<Value> = tc.iter().map(|t| {
@@ -146,6 +152,12 @@ pub struct AgentOutcome {
     pub tool_calls_made: u32,
     pub iterations: u32,
     pub finished: bool,
+    /// True when the model asked the user a question (clarification or a
+    /// choice) and the turn PAUSED to wait for the user's answer (CAP —
+    /// Coding Auto-Pilot — off). `final_text` holds the question. The
+    /// caller shows it and feeds the user's answer back as the next user
+    /// message; the conversation history already contains the question.
+    pub needs_input: bool,
     pub blocked_reason: Option<String>,
     /// True when the turn was stopped by an interaction budget (iteration
     /// cap or wall-clock run budget) but still produced a final answer from

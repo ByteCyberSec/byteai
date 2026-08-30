@@ -28,12 +28,16 @@ mod sandbox;
 mod crew;
 mod mcp;
 pub mod schedule;
+pub mod cron;
+mod proc;
+mod sessionsearch;
+pub mod herdr;
 mod pi;
 mod workflow;
 mod improve;
 mod gates;
 mod ideas;
-mod github;
+pub mod github;
 pub mod note;
 pub mod read;
 pub mod search;
@@ -46,6 +50,7 @@ mod kanban;
 mod memsearch;
 mod moa;
 mod notify;
+mod dan;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -65,6 +70,14 @@ pub trait Tool: Send + Sync {
     fn name(&self) -> &'static str;
     fn def(&self) -> ToolDef;
     fn execute(&self, args: Value) -> BoxFuture<'_, ToolOutcome>;
+
+    /// Long-running tools (delegation/spawn, review swarms…) legitimately
+    /// take far longer than a normal tool call. The agent loop gives them a
+    /// dedicated, much larger timeout instead of the generic per-tool cap,
+    /// so a real multi-agent delegation is never killed at 300s mid-flight.
+    fn long_running(&self) -> bool {
+        false
+    }
 }
 
 /// Shared context passed to tools at construction time.
@@ -175,7 +188,10 @@ impl Registry {
             Arc::new(ctx.default_model.clone()),
         )));
         r.register(Arc::new(notify::NotifyTool));
+        r.register(Arc::new(proc::ProcTool::new(ctx.data_dir.clone())));
+        r.register(Arc::new(sessionsearch::SessionSearchTool::new(ctx.data_dir.clone())));
         r.register(Arc::new(pi::PiTool::new(ctx.data_dir.clone())));
+        r.register(Arc::new(dan::DanMethodologyTool));
         r
     }
 }

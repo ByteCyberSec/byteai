@@ -1,4 +1,4 @@
-//! ByteAi memory store: SQLite + FTS5.
+//! ByteAi memory store: SQLite + FTS5 (+ TencentDB Agent Memory HTTP client).
 //!
 //! Phase 5: working state (session log), notes (FTS), project wiki (markdown
 //! pages), entity index. Backed by one SQLite database at data_dir/memory.db
@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
+
+pub mod hub;
+pub mod tdai;
 
 /// Memory entry kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -8,3 +8,4 @@ target/
 *.db-wal
 *.db-shm
 .apex/
+.checkpoints/

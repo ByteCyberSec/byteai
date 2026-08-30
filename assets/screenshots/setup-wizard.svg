@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="782" height="494" viewBox="0 0 782 494">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0%" stop-color="#1e1f26"/>
+<stop offset="100%" stop-color="#141519"/>
+</linearGradient>
+</defs>
+<rect x="0" y="0" width="782" height="494" rx="10" fill="url(#bg)"/>
+<rect x="0" y="0" width="782" height="34" rx="10" fill="#26272e"/>
+<rect x="0" y="24" width="782" height="10" fill="#26272e"/>
+<circle cx="18" cy="17" r="5.5" fill="#ff5f57"/>
+<circle cx="36" cy="17" r="5.5" fill="#ff5f57"/>
+<circle cx="54" cy="17" r="5.5" fill="#ff5f57"/>
+<circle cx="36" cy="17" r="5.5" fill="#febc2e"/>
+<circle cx="54" cy="17" r="5.5" fill="#28c840"/>
+<text x="391" y="22" fill="#9a9ba5" font-family="Menlo,Consolas,monospace" font-size="12" text-anchor="middle">ByteAi — interactive setup wizard</text>
+<text x="14" y="62" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13"></text>
+<text x="14" y="80" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">╔══════════════════════════════════════════════════╗</text>
+<text x="14" y="98" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">║     ByteAi Setup Wizard  —  interactive setup   ║</text>
+<text x="14" y="116" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">╚══════════════════════════════════════════════════╝</text>
+<text x="14" y="134" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13"></text>
+<text x="14" y="152" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">This wizard will configure ByteAI step by step.</text>
+<text x="14" y="170" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">Press Enter to accept defaults shown in [brackets].</text>
+<text x="14" y="188" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13"></text>
+<text x="14" y="206" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">✓ Existing config found at: /tmp/byteai-demo-cfg/config.toml</text>
+<text x="14" y="224" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">  Would you like to overwrite it? (y/n) [n]: </text>
+<text x="14" y="242" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">── Provider — any OpenAI-compatible API endpoint ──</text>
+<text x="14" y="260" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13"></text>
+<text x="14" y="278" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">  Provider name [omniroute]:   Base URL [http://localhost:20128/v1]:   Default model [deepseek-v4-flash]: </text>
+<text x="14" y="296" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">API key: leave empty for local providers, or set:</text>
+<text x="14" y="314" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">  (1) Paste a literal key</text>
+<text x="14" y="332" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">  (2) Use an environment variable name</text>
+<text x="14" y="350" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">  Option (1/2) [1]:   API key (or leave empty) []:   Add a second provider? (useful for failover) (y/n) [n]: </text>
+<text x="14" y="368" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">── Agent Behaviour ──</text>
+<text x="14" y="386" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13"></text>
+<text x="14" y="404" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">  Max iterations per turn [300]:   Tool timeout (seconds, 0 = default 300) [300]:   Auto-continue mid-task? (Y/n) (y/n) [y]:   CAP — Coding Auto-Pilot? (full autonomy, no pauses for questions) (y/n) [n]:   Enable memory (persistent context across sessions)? (y/n) [y]:   Smart tool selection (only expose relevant tools per turn)? (y/n) [y]: </text>
+<text x="14" y="422" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">✓ Config written to: /tmp/byteai-demo-cfg/config.toml</text>
+<text x="14" y="440" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13"></text>
+<text x="14" y="458" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">── Skills ──</text>
+<text x="14" y="476" fill="#d6d7de" font-family="Menlo,Consolas,monospace" font-size="13">  Install starter skills? (recommended) (y/n) [y]: Installing built-in skills…</text>
+</svg>

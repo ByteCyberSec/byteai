@@ -466,6 +466,208 @@ impl GithubTool {
         })
     }
 
+    /// /Github connect — connect the current project to GitHub: check `gh`
+    /// auth, create a remote repo (public by default, `--visibility private`
+    /// for private), set the remote, and push. Returns the repo URL.
+    fn connect(&self, repo_name: Option<&str>, visibility: &str) -> BoxFuture<'_, ToolOutcome> {
+        let repo_name = repo_name.map(|s| s.to_string());
+        let visibility = visibility.to_string();
+        Box::pin(async move {
+            let started = Instant::now();
+            let mut out = String::new();
+
+            // 1. `gh` CLI available?
+            let gh = tokio::process::Command::new("gh").arg("--version").output().await;
+            let gh_ok = match gh {
+                Ok(o) if o.status.success() => true,
+                _ => false,
+            };
+            if !gh_ok {
+                out.push_str(
+                    "ERROR: `gh` CLI not found on PATH. Install it first:\n\
+                     \x20 brew install gh   # macOS\n\
+                     \x20 then run: gh auth login\n",
+                );
+                return ok_outcome("", "github", out, started.elapsed().as_millis() as u64);
+            }
+
+            // 2. Authenticated?
+            let auth = tokio::process::Command::new("gh").args(["auth", "status"]).output().await;
+            match auth {
+                Ok(o) if o.status.success() => {
+                    let who = String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .find(|l| l.contains("Logged in"))
+                        .unwrap_or("authenticated")
+                        .trim()
+                        .to_string();
+                    out.push_str(&format!("✓ GitHub auth OK — {who}\n\n"));
+                }
+                Ok(o) => {
+                    let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                    out.push_str(&format!(
+                        "ERROR: not authenticated with GitHub.\n{err}\nRun: gh auth login\n"
+                    ));
+                    return ok_outcome("", "github", out, started.elapsed().as_millis() as u64);
+                }
+                Err(e) => {
+                    out.push_str(&format!("ERROR: could not run gh auth status: {e}\n"));
+                    return ok_outcome("", "github", out, started.elapsed().as_millis() as u64);
+                }
+            }
+
+            // 3. Resolve repo name + visibility.
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let default_name = cwd
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "byteai".to_string());
+            let repo = repo_name.as_deref().unwrap_or("").trim();
+            let name = if repo.is_empty() { default_name.clone() } else { repo.to_string() };
+            let vis_flag = if visibility == "private" { "private" } else { "public" };
+
+            // 4. Create the repo (idempotent: view first, create if missing).
+            let view = tokio::process::Command::new("gh")
+                .args(["repo", "view", &name, "--json", "url"])
+                .output().await;
+            let exists = matches!(view, Ok(o) if o.status.success());
+            if !exists {
+                out.push_str(&format!("Creating GitHub repo `{name}` ({vis_flag})…\n"));
+                let create = tokio::process::Command::new("gh")
+                    .args(["repo", "create", &name, "--source", ".", "--", "--", vis_flag])
+                    .current_dir(&cwd)
+                    .output().await;
+                match create {
+                    Ok(o) if o.status.success() => {
+                        let text = String::from_utf8_lossy(&o.stdout);
+                        let url = text
+                            .lines()
+                            .find(|l| l.contains("github.com/"))
+                            .map(|l| l.trim().to_string())
+                            .unwrap_or_else(|| format!("https://github.com/{name}"));
+                        out.push_str(&format!("✓ Repo created: {url}\n"));
+                    }
+                    Ok(o) => {
+                        let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                        out.push_str(&format!(
+                            "Could not create repo. Try manually:\n  gh repo create {name} --source . --public\nstderr: {err}\n"
+                        ));
+                        return ok_outcome("", "github", out, started.elapsed().as_millis() as u64);
+                    }
+                    Err(e) => {
+                        out.push_str(&format!("Could not create repo: {e}\n"));
+                        return ok_outcome("", "github", out, started.elapsed().as_millis() as u64);
+                    }
+                }
+            } else {
+                out.push_str(&format!("✓ Repo `{name}` already exists.\n"));
+            }
+
+            // 5. Ensure git remote + push.
+            let has_remote = tokio::process::Command::new("git")
+                .args(["remote", "get-url", "origin"]).current_dir(&cwd).output().await;
+            let remote_ok = matches!(has_remote, Ok(o) if o.status.success());
+            let push_url = format!("https://github.com/{name}.git");
+            if !remote_ok {
+                out.push_str(&format!("Adding git remote origin → {push_url}\n"));
+                let _ = tokio::process::Command::new("git")
+                    .args(["remote", "add", "origin", &push_url])
+                    .current_dir(&cwd).output().await;
+            }
+            out.push_str("Pushing to GitHub…\n");
+            let push = tokio::process::Command::new("git")
+                .args(["push", "-u", "origin", "HEAD"])
+                .current_dir(&cwd).output().await;
+            match push {
+                Ok(o) if o.status.success() => {
+                    out.push_str("✓ Pushed. Your project is live at:\n");
+                    out.push_str(&format!("  https://github.com/{name}\n"));
+                }
+                Ok(o) => {
+                    let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                    out.push_str(&format!(
+                        "Push reported a non-zero status (may need a commit):\n{err}\n\n\
+                         After committing, run: git push -u origin HEAD\n"
+                    ));
+                }
+                Err(e) => out.push_str(&format!("Push error: {e}\n")),
+            }
+            ok_outcome("", "github", out, started.elapsed().as_millis() as u64)
+        })
+    }
+
+    /// /Github status — check gh CLI + auth + current repo state (no side
+    /// effects: never creates or pushes).
+    fn connect_status(&self) -> BoxFuture<'_, ToolOutcome> {
+        Box::pin(async move {
+            let started = Instant::now();
+            let mut out = String::new();
+
+            let gh = tokio::process::Command::new("gh").arg("--version").output().await;
+            match gh {
+                Ok(o) if o.status.success() => {
+                    out.push_str("✓ gh CLI available\n");
+                }
+                _ => {
+                    out.push_str("✗ `gh` CLI not found — install: brew install gh\n");
+                    return ok_outcome("", "github", out, started.elapsed().as_millis() as u64);
+                }
+            }
+
+            let auth = tokio::process::Command::new("gh").args(["auth", "status"]).output().await;
+            match auth {
+                Ok(o) if o.status.success() => {
+                    let who = String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .find(|l| l.contains("Logged in"))
+                        .unwrap_or("authenticated")
+                        .trim()
+                        .to_string();
+                    out.push_str(&format!("✓ GitHub auth OK — {who}\n"));
+                }
+                Ok(o) => {
+                    let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                    out.push_str(&format!("✗ Not authenticated with GitHub.\n{err}\nRun: gh auth login\n"));
+                    return ok_outcome("", "github", out, started.elapsed().as_millis() as u64);
+                }
+                Err(e) => {
+                    out.push_str(&format!("✗ Could not run gh auth status: {e}\n"));
+                    return ok_outcome("", "github", out, started.elapsed().as_millis() as u64);
+                }
+            }
+
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let name = cwd
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "byteai".to_string());
+            out.push_str(&format!("Project: {}\n", cwd.display()));
+
+            let remote = tokio::process::Command::new("git")
+                .args(["remote", "get-url", "origin"]).current_dir(&cwd).output().await;
+            match remote {
+                Ok(o) if o.status.success() => {
+                    let url = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    out.push_str(&format!("✓ git remote origin → {url}\n"));
+                }
+                _ => out.push_str("— no git remote `origin` yet (run /github connect)\n"),
+            }
+
+            let view = tokio::process::Command::new("gh")
+                .args(["repo", "view", &name, "--json", "url,visibility"])
+                .output().await;
+            match view {
+                Ok(o) if o.status.success() => {
+                    let info = String::from_utf8_lossy(&o.stdout);
+                    out.push_str(&format!("✓ GitHub repo exists: {info}\n"));
+                }
+                _ => out.push_str(&format!("— no GitHub repo `{name}` yet (run /github connect)\n")),
+            }
+            out.push_str("\nTo publish this project: /github connect [repo-name] [public|private]\n");
+            ok_outcome("", "github", out, started.elapsed().as_millis() as u64)
+        })
+    }
+
     /// Shared: build the (system, user) evaluation prompt pair.
     fn eval_prompt_direct(target: &str, focus: &str, today: &str) -> (String, String) {
         let system = [
@@ -591,12 +793,13 @@ impl Tool for GithubTool {
             description: "/Github — capability discovery and upgrade engine. Finds and scores skills, harnesses, tools, \
 MCP servers, libraries, and coding-agent technology using the COMPATIBILITY ENGINE (APEX/project compatibility 0-100, \
 complexity, performance, security, maintenance, license, ADOPT/ADAPT/LEARN FROM/REJECT). Keeps a GitHub intelligence \
-memory + capability graph under intelligence/. Actions: menu, search, evaluate, current, improve, memory, graph. \
+memory + capability graph under intelligence/. Also supports /Github connect — connect this project to GitHub via gh CLI \
+(auth, create repo, push). Actions: menu, search, evaluate, current, improve, memory, graph, connect, status, push. \
 Input: {action, target, query}.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "enum": ["menu", "search", "evaluate", "current", "improve", "memory", "graph"] },
+                    "action": { "type": "string", "enum": ["menu", "search", "evaluate", "current", "improve", "memory", "graph", "connect", "status", "push"] },
                     "target": { "type": "string", "description": "skills | harnesses | tools | mcp | libraries | debugging | testing | security | <anything>" },
                     "query": { "type": "string", "description": "Capability or repo (owner/repo for evaluate)" }
                 },
@@ -626,6 +829,35 @@ Input: {action, target, query}.".into(),
                 let out = self.menu();
                 let started = Instant::now();
                 Box::pin(async move { ok_outcome("", "github", out, started.elapsed().as_millis() as u64) })
+            }
+            "connect" | "status" | "push" => {
+                // Parse: /github connect [repo-name] [private|public]
+                // target/query both carry the action word ("connect ..."); strip
+                // it, plus any duplicate action mentions, then split the rest.
+                //   - visibility is the LAST word if it is private/public
+                //   - repo name is whatever else (default = cwd basename)
+                let mut words: Vec<String> = target
+                    .split_whitespace()
+                    .chain(query.split_whitespace())
+                    .filter(|s| !s.is_empty())
+                    .filter(|s| *s != action)
+                    .map(|s| s.to_string())
+                    .collect();
+                let mut visibility = "public";
+                if let Some(last) = words.last().map(|s| s.to_lowercase()) {
+                    if last == "private" || last == "public" {
+                        visibility = if last == "private" { "private" } else { "public" };
+                        words.pop();
+                    }
+                }
+                let repo_name = words.join("-");
+                let repo = if repo_name.is_empty() { None } else { Some(repo_name.as_str()) };
+                if action == "status" {
+                    // Just auth + repo status, no create/push.
+                    self.connect_status()
+                } else {
+                    self.connect(repo, visibility)
+                }
             }
             "search" => self.search(&target, &query),
             "evaluate" => {

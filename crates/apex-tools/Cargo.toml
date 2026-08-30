@@ -19,3 +19,4 @@ apex-dap = { path = "../apex-dap" }
 apex-memory = { path = "../apex-memory" }
 apex-ast = { path = "../apex-ast" }
 reqwest = { workspace = true }
+toml = { workspace = true }
