@@ -61,6 +61,9 @@ const COMMANDS: &[(&str, &str)] = &[
     ("goal", "durable session goal: /goal set <text> | get | clear | complete"),
     ("terminal", "persistent shell: /terminal create|list|run <id> <cmd>|close <id>"),
     ("feedback", "record feedback: /feedback remark <text> | rate <id> <1-5> | stats"),
+    ("autoskill", "self-evolving: /autoskill learn <pattern> | list | promote | forget"),
+    ("conductor", "hierarchical orchestration: /conductor new|phase|task|start|done|status|synthesize"),
+    ("autocontext", "context governor: /autocontext status|recall <id>|archive <id> <name>|prune <hours>"),
     ("setup", "interactive setup wizard: /setup (providers, models, skills, tools)"),
     ("subagent", "spawn parallel subagents"),
     ("swarm", "spawn 3-way swarm"),
@@ -2331,6 +2334,66 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
                 None => app.add_error("feedback tool not available"),
             }
         }
+        "autoskill" => {
+            let action = parts.get(1).copied().unwrap_or("list");
+            let pattern = parts.get(2).copied().unwrap_or("");
+            let context = parts.get(3..).unwrap_or(&[]).join(" ");
+            let args = serde_json::json!({"action": action, "pattern": pattern, "context": context});
+            let g = agent.lock().await;
+            let tool = g.tools.get("autoskill");
+            drop(g);
+            match tool {
+                Some(tool) => {
+                    let outcome = tool.execute(args).await;
+                    app.add_tool_card(&outcome.name, outcome.ok, outcome.elapsed_ms, &outcome.output);
+                }
+                None => app.add_error("autoskill tool not available"),
+            }
+        }
+        "conductor" => {
+            let action = parts.get(1).copied().unwrap_or("list");
+            let name = parts.get(2).copied().unwrap_or("default");
+            let rest = parts.get(3..).unwrap_or(&[]).join(" ");
+            let args = match action {
+                "task" => {
+                    let tparts: Vec<&str> = rest.splitn(3, ' ').collect();
+                    serde_json::json!({"action": "task", "name": name, "phase": tparts.first().copied().unwrap_or(""), "task": tparts.get(1).copied().unwrap_or(""), "deps": tparts.get(2).map(|d| d.split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>()).unwrap_or_default()})
+                }
+                "done" | "start" => {
+                    let item = parts.get(3).copied().unwrap_or("");
+                    let outcome = parts.get(4..).unwrap_or(&[]).join(" ");
+                    serde_json::json!({"action": action, "name": name, "item": item, "outcome": outcome})
+                }
+                _ => serde_json::json!({"action": action, "name": name, "phase": rest, "task": ""}),
+            };
+            let g = agent.lock().await;
+            let tool = g.tools.get("conductor");
+            drop(g);
+            match tool {
+                Some(tool) => {
+                    let outcome = tool.execute(args).await;
+                    app.add_tool_card(&outcome.name, outcome.ok, outcome.elapsed_ms, &outcome.output);
+                }
+                None => app.add_error("conductor tool not available"),
+            }
+        }
+        "autocontext" => {
+            let action = parts.get(1).copied().unwrap_or("status");
+            let id = parts.get(2).copied().unwrap_or("");
+            let name = parts.get(3).copied().unwrap_or("");
+            let hours = parts.get(2).and_then(|s| s.parse::<u64>().ok()).unwrap_or(24);
+            let args = serde_json::json!({"action": action, "id": id, "name": name, "hours": hours});
+            let g = agent.lock().await;
+            let tool = g.tools.get("autocontext");
+            drop(g);
+            match tool {
+                Some(tool) => {
+                    let outcome = tool.execute(args).await;
+                    app.add_tool_card(&outcome.name, outcome.ok, outcome.elapsed_ms, &outcome.output);
+                }
+                None => app.add_error("autocontext tool not available"),
+            }
+        }
         other => {
             app.add_error(&format!("unknown command /{other} — try /help"));
         }
@@ -2840,7 +2903,7 @@ mod tests {
             "clear", "save", "usage", "session", "resume", "config", "keys",
             "version", "copy", "diff",
             "subagent", "swarm", "route", "council", "govern", "gates", "cap",
-            "ideas", "github", "goal", "terminal", "feedback", "setup", "dan", "quit",
+            "ideas", "github", "goal", "terminal", "feedback", "autoskill", "conductor", "autocontext", "setup", "dan", "quit",
         ];
         for (name, _) in COMMANDS {
             assert!(handled.contains(name), "palette command /{name} has no handler");

@@ -22,6 +22,9 @@
 - **Context spill** — oversized tool output is auto-saved to a spill artifact + bounded preview + locator (no silent truncation, no context rot)
 - **Durable goal** — `/goal` sets one completion objective that survives restart/resume and anchors auto-continue
 - **Feedback** — `/feedback` records human remarks + per-message ratings as signals about output (never fed to the model)
+- **AutoSkill** — ByteAI learns from its own success: record lessons, recurring patterns auto-promote into real loadable skills. Gets smarter with use.
+- **Conductor** — hierarchical orchestration: goals → phases → tasks with dependency gating (blocked until deps finish), progress %, outcome synthesis
+- **Auto-Context** — context governor: discover, recall, archive, and prune spill artifacts; the agent manages its own context window
 - **Memory hub** — persistent SQLite+FTS5 memory across sessions (L0 conversations, L1 atomics, L2 scenarios, L3 persona, skills)
 - **Skills system** — load/install SKILL.md files, engineering discipline, lesson capture
 - **Terminal UI** — oh-my-pi inspired TUI with command palette, slash commands, sparkline tool cards
@@ -114,6 +117,9 @@ byteai github status   # Check GitHub auth + repo status
 | `/goal <set\|get\|clear\|complete>` | One durable session goal (survives resume) |
 | `/terminal <create\|list\|run\|close>` | Persistent shell sessions (cwd survives calls) |
 | `/feedback <remark\|rate\|stats>` | Record human feedback (never fed to model) |
+| `/autoskill <learn\|list\|promote\|forget>` | Self-evolving: ByteAI learns from success, auto-promotes to skills |
+| `/conductor <new\|phase\|task\|start\|done\|status\|synthesize>` | Hierarchical orchestration with dependency gating |
+| `/autocontext <status\|recall\|archive\|prune>` | Context governor: manage spill artifacts |
 | `/setup` | Interactive setup wizard |
 | `/tools` | List available tools |
 | `/save <name>` | Save session |

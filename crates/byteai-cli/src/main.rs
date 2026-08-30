@@ -667,6 +667,9 @@ async fn repl(agent: &mut Agent) -> Result<()> {
                     println!("/goal <set|get|clear|complete> — one durable session goal (survives resume)");
                     println!("/terminal <create|list|run|close> — persistent shell sessions (state survives calls)");
                     println!("/feedback <remark|rate|stats> — record human feedback (never fed to the model)");
+                    println!("/autoskill <learn|list|promote|forget> — ByteAI learns from success, auto-promotes to skills");
+                    println!("/conductor <new|phase|task|start|done|status|blocked|synthesize|list|close> — hierarchical orchestration");
+                    println!("/autocontext <status|recall|archive|prune> — context governor (manage spill files)");
                     println!("/save <name>    — save this session");
                     println!("/usage          — show token usage");
                     println!("/cap            — toggle CAP (Coding Auto-Pilot): ON=autonomous, OFF=wait for your answers");
@@ -903,6 +906,57 @@ async fn repl(agent: &mut Agent) -> Result<()> {
                     match agent.tools.get("feedback") {
                         Some(t) => { let o = t.execute(args).await; println!("[feedback] {}", o.output); }
                         None => println!("[feedback tool not available]"),
+                    }
+                }
+                "autoskill" => {
+                    let rest = cmd.split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
+                    let action = rest.split_whitespace().next().unwrap_or("list").to_string();
+                    let text = rest.split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
+                    let (pattern, context) = if action == "learn" {
+                        text.split_once(" — ").map(|(p, c)| (p.to_string(), c.to_string()))
+                            .or_else(|| text.split_once(" | ").map(|(p, c)| (p.to_string(), c.to_string())))
+                            .unwrap_or((text.clone(), String::new()))
+                    } else {
+                        (text, String::new())
+                    };
+                    let args = serde_json::json!({"action": action, "pattern": pattern, "context": context});
+                    match agent.tools.get("autoskill") {
+                        Some(t) => { let o = t.execute(args).await; println!("[autoskill] {}", o.output); }
+                        None => println!("[autoskill tool not available]"),
+                    }
+                }
+                "conductor" => {
+                    let parts: Vec<&str> = cmd.split_whitespace().skip(1).collect();
+                    let action = parts.first().copied().unwrap_or("list");
+                    // name is the first bare token after action, or last token for list
+                    let name = parts.get(1).copied().unwrap_or("default");
+                    let rest = parts.get(2..).unwrap_or(&[]).join(" ");
+                    let args = match action {
+                        "task" => {
+                            let tparts: Vec<&str> = rest.splitn(3, ' ').collect();
+                            serde_json::json!({"action": "task", "name": name, "phase": tparts.first().copied().unwrap_or(""), "task": tparts.get(1).copied().unwrap_or(""), "deps": tparts.get(2).map(|d| d.split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>()).unwrap_or_default()})
+                        }
+                        "done" | "start" => {
+                            let item = parts.get(2).copied().unwrap_or("");
+                            let outcome = parts.get(3..).unwrap_or(&[]).join(" ");
+                            serde_json::json!({"action": action, "name": name, "item": item, "outcome": outcome})
+                        }
+                        _ => serde_json::json!({"action": action, "name": name, "phase": rest, "task": ""}),
+                    };
+                    match agent.tools.get("conductor") {
+                        Some(t) => { let o = t.execute(args).await; println!("[conductor] {}", o.output); }
+                        None => println!("[conductor tool not available]"),
+                    }
+                }
+                "autocontext" => {
+                    let rest = cmd.split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
+                    let action = rest.split_whitespace().next().unwrap_or("status").to_string();
+                    let id = rest.split_whitespace().nth(1).unwrap_or("").to_string();
+                    let name = rest.split_whitespace().nth(2).unwrap_or("").to_string();
+                    let args = serde_json::json!({"action": action, "id": id, "name": name});
+                    match agent.tools.get("autocontext") {
+                        Some(t) => { let o = t.execute(args).await; println!("[autocontext] {}", o.output); }
+                        None => println!("[autocontext tool not available]"),
                     }
                 }
                 "quit" | "q" | "exit" => break,

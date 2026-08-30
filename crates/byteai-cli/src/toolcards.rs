@@ -86,6 +86,9 @@ pub fn tool_sigil(name: &str) -> &'static str {
         "terminal" => "❯_",      // persistent prompt with cursor
         "goal" => "◎→",          // target with forward arrow
         "feedback" => "❝★",      // quote + star (human judgment)
+        "autoskill" => "✧↻",     // self-evolving spark
+        "conductor" => "⌬⊟",     // orchestrated graph
+        "autocontext" => "◫◍",   // managed context blocks
         "sessionsearch" => "◔",  // browsing history
         "memsearch" => "◍",      // dotted memory
         "pi" => "π",             // pi
