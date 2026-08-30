@@ -1,7 +1,7 @@
 # oh-my-pi — Research Notes
 
 > Source: https://github.com/can1357/oh-my-pi (clone at `research/repos/oh-my-pi`, 2026-08-25)
-> Document purpose: Phase 0 research for APEX (ByteAi). Verified by reading source layout + key files; this is a 3.1M-LOC monorepo, so the analysis focuses on architectural surface, verified by targeted reads.
+> Document purpose: Phase 0 research for ByteAi (ByteAi). Verified by reading source layout + key files; this is a 3.1M-LOC monorepo, so the analysis focuses on architectural surface, verified by targeted reads.
 
 ## 1. Overview
 
@@ -45,89 +45,89 @@ oh-my-pi/
 - what: full agent session state machine: turns, tool calls, retry/fallback (test `agent-session-retry-fallback.test.ts` 5,408), maintenance (`session-maintenance.ts` 4,028), streaming, worker dispatch (CLI re-enters `cli.ts` via `workerHostEntry()` with hidden argv selectors for stats/tab/js-eval/tiny-inference workers).
 - why: single well-tested session object; retry/fallback is first-class.
 - approach: TS classes with `#private` fields; `Promise.withResolvers`; prompts in static `.md` files imported as text — never built in code (AGENTS.md rule).
-- APEX copy: prompts-as-static-files (versioned, testable); worker re-entry pattern for worker processes; retry-fallback as a tested unit.
-- APEX improve: APEX's Rust core should keep the loop smaller than this 9.8K-line session class; split into phases (UNDERSTANDING/INVESTIGATING/IMPLEMENTING/VERIFYING/RECOVERING) with tool policies per phase (APEX §45).
+- ByteAi copy: prompts-as-static-files (versioned, testable); worker re-entry pattern for worker processes; retry-fallback as a tested unit.
+- ByteAi improve: ByteAi's Rust core should keep the loop smaller than this 9.8K-line session class; split into phases (UNDERSTANDING/INVESTIGATING/IMPLEMENTING/VERIFYING/RECOVERING) with tool policies per phase (ByteAi §45).
 
 ### Edit engine (`edit/` — sloppy.ts 3,973 + diff, blackbox, modes/replace, normalize, read-file, renderer, result)
 - what: multi-strategy editing: "sloppy" format (a Lark-grammar DSL `sloppy.lark` for loose model-written edit payloads), plus strict replace modes with levenshtein fallback, line-ending/unicode/BOM normalization, diff generation, LSP writethrough (`routeWriteThroughBridge`, `LspBatchRequest`), fs-cache invalidation after writes, plan-mode guard. `hashline` package = line-hash verification of applied edits.
 - why: models write sloppy edit payloads; a tolerant grammar + normalization + post-apply verification (LSP + hashes) maximizes edit success.
 - approach: pure text transformers (no I/O in the sloppy variants — testable); results aggregated with per-file details; `typescript-edit-benchmark` package ships cross-model edit results (all_models_results.json).
-- APEX copy: sloppy-grammar edit format; multi-strategy fallback (exact → contextual → sloppy → whole-file); line-ending/unicode normalization; LSP writethrough; edit-result aggregation; per-model edit benchmarks.
-- APEX improve: explicit edit-failure classification + strategy switching (never repeat the same failed method 3× — APEX §8); syntax/LSP validation gating after every edit.
+- ByteAi copy: sloppy-grammar edit format; multi-strategy fallback (exact → contextual → sloppy → whole-file); line-ending/unicode normalization; LSP writethrough; edit-result aggregation; per-model edit benchmarks.
+- ByteAi improve: explicit edit-failure classification + strategy switching (never repeat the same failed method 3× — ByteAi §8); syntax/LSP validation gating after every edit.
 
 ### LSP (`lsp/` — client, diagnostics, servers, tool, writethrough)
 - what: real LSP client: server detection/warmup with parallel connect + timeouts (`warmupLspServers`, `LSP_READONLY_ACTIONS`), diagnostics (`FileDiagnosticsResult`), formatting, writethrough batching (`createLspWritethrough`, `flushLspWritethroughBatch`), LSP-backed tool (`LspTool`); regression tests (`tools/lsp-regressions.test.ts` 4,832).
 - why: edits validated against real language servers; writethrough keeps the buffer and server in sync.
-- APEX copy: LSP client with warmup, diagnostics gating, writethrough; read-only vs mutating action split.
-- APEX improve: make LSP optional/async (warmup in background; degrade gracefully when servers missing); cache diagnostics per file with invalidation on change (APEX §27).
+- ByteAi copy: LSP client with warmup, diagnostics gating, writethrough; read-only vs mutating action split.
+- ByteAi improve: make LSP optional/async (warmup in background; degrade gracefully when servers missing); cache diagnostics per file with invalidation on change (ByteAi §27).
 
 ### DAP (`dap/` — client.ts 1,043, session.ts, types.ts, config.ts)
 - what: full Debug Adapter Protocol client: adapter resolution (DEFAULT_ADAPTERS incl. gdb, lldb-dap, js-debug-adapter via nvim-mason path discovery; `EXTENSIONLESS_DEBUGGER_ORDER = [gdb, lldb-dap]`), JSON-RPC message framing, socket-mode (unix/TCP) with ready timeouts, tool-level debug integration (`tools/debug.ts`), capabilities/state machine.
 - why: real debugger control (breakpoints, step, evaluate) instead of print-debugging.
-- APEX copy: DAP client architecture; adapter resolution + extensionless order; message framing; tool-timeout integration.
-- APEX improve: APEX wants the full debug loop (REPRODUCE→OBSERVE→HYPOTHESIZE→INSTRUMENT→TEST→ROOT CAUSE→MINIMAL FIX→VERIFY→REGRESSION) — oh-my-pi provides the transport, APEX must add the reasoning loop and debugpy/dlv support explicitly.
-- APEX reject: dependence on nvim-mason paths (fragile) — probe adapters independently.
+- ByteAi copy: DAP client architecture; adapter resolution + extensionless order; message framing; tool-timeout integration.
+- ByteAi improve: ByteAi wants the full debug loop (REPRODUCE→OBSERVE→HYPOTHESIZE→INSTRUMENT→TEST→ROOT CAUSE→MINIMAL FIX→VERIFY→REGRESSION) — oh-my-pi provides the transport, ByteAi must add the reasoning loop and debugpy/dlv support explicitly.
+- ByteAi reject: dependence on nvim-mason paths (fragile) — probe adapters independently.
 
 ### Subagents & parallel execution (`task/` — executor, parallel, spawn-policy, provider-concurrency, agents; `subprocess/` workers)
 - what: typed task executor with parallel spawning, spawn policy (concurrency limits), provider-concurrency tracking, agent roles (`task/agents.ts`), label/repair-args; worker processes via CLI re-entry (hidden argv selectors).
 - why: bounded parallel work with provider limits prevents rate-limit storms.
-- APEX copy: spawn-policy + provider-concurrency; typed task results; worker re-entry.
-- APEX improve: isolated git worktrees per worker with conflict detection (oh-my-pi's worktree use is mostly in autoresearch/git.ts and hindsight; APEX must make worktree isolation a first-class coordinator concern — APEX §10); structured result schemas per role (status/findings/files/tests/risks) — oh-my-pi is typed but APEX wants queryable schemas (§11).
+- ByteAi copy: spawn-policy + provider-concurrency; typed task results; worker re-entry.
+- ByteAi improve: isolated git worktrees per worker with conflict detection (oh-my-pi's worktree use is mostly in autoresearch/git.ts and hindsight; ByteAi must make worktree isolation a first-class coordinator concern — ByteAi §10); structured result schemas per role (status/findings/files/tests/risks) — oh-my-pi is typed but ByteAi wants queryable schemas (§11).
 
 ### Advisor / reviewer (`advisor/` — advise-tool, runtime, transcript-recorder, delta-split, loop-guard)
 - what: independent advisor agent: records transcript, splits deltas, guards loops; tests (`advisor/advisor.test.ts` 5,754). Adversarial verification wired into commit/cleanse agents too (analyze-file, cleanse agent).
 - why: catches what the main loop misses; loop-guard prevents advisor feedback loops.
-- APEX copy: advisor with transcript + delta-split; loop guard; severity-classified findings (APEX wants INFO/WARNING/BLOCKER).
-- APEX improve: make reviewer optional per APEX §12 (not on every turn); concise output contract.
+- ByteAi copy: advisor with transcript + delta-split; loop guard; severity-classified findings (ByteAi wants INFO/WARNING/BLOCKER).
+- ByteAi improve: make reviewer optional per ByteAi §12 (not on every turn); concise output contract.
 
 ### Memory (`memories/`, `memory-backend/`, `mnemopi/`, `hindsight/`)
 - what: multiple memory subsystems: memories/ + memory-backend (persistent backends), mnemopi (memory engine), hindsight (worktree/transcript bank with mental-models, seeds.json, state.ts, backend.ts).
 - why: layered: bank (worktrees/state) + memory backends + mental models.
-- APEX copy: backend abstraction for memory; hindsight-style state bank.
-- APEX improve: adopt ai-memory's Markdown-source-of-truth + SQLite/FTS + optional embeddings discipline instead of bespoke backends; explicit conflict metadata (APEX §15).
+- ByteAi copy: backend abstraction for memory; hindsight-style state bank.
+- ByteAi improve: adopt ai-memory's Markdown-source-of-truth + SQLite/FTS + optional embeddings discipline instead of bespoke backends; explicit conflict metadata (ByteAi §15).
 
 ### Providers & routing (`packages/ai`, `packages/catalog`)
 - what: broad provider surface: anthropic, openai-compat, openai-responses, cursor (with proto), gitlab-duo, devin; auth-storage with credential selection (tests: auth-storage-codex-selection); catalog with ~557-model models.json and provider descriptors.
-- APEX copy: provider abstraction; auth-storage; catalog-driven model metadata.
-- APEX improve: role-based routing (FAST/SMART/CODE/DEBUG/REVIEW/...) with learned per-task-class success stats (APEX §3) — oh-my-pi routes by provider/model but not by learned capability; cheapest-sufficient-model selection.
+- ByteAi copy: provider abstraction; auth-storage; catalog-driven model metadata.
+- ByteAi improve: role-based routing (FAST/SMART/CODE/DEBUG/REVIEW/...) with learned per-task-class success stats (ByteAi §3) — oh-my-pi routes by provider/model but not by learned capability; cheapest-sufficient-model selection.
 
 ### Search & files (`crates/pi-natives`, `packages/natives`, `workspace-tree.ts`, `tools/grouped-file-output.ts`)
 - what: Rust-native grep/sed/find/ls/tail/sort; walker; workspace tree; grouped file output (concise regions, not whole files).
 - why: native speed + bounded output.
-- APEX copy: Rust grep/find natives; grouped/tiered file output; walker.
-- APEX improve: tiered search router (literal → regex → symbol/LSP → AST → semantic) choosing cheapest sufficient (APEX §6).
+- ByteAi copy: Rust grep/find natives; grouped/tiered file output; walker.
+- ByteAi improve: tiered search router (literal → regex → symbol/LSP → AST → semantic) choosing cheapest sufficient (ByteAi §6).
 
 ### TUI (`packages/tui`, `modes/interactive-mode.ts` 5,773, `components/agent-hub.ts`, `startup-splash.ts`)
 - what: TUI library with differential rendering, markdown + editor components; interactive mode; agent hub component (inspect/steer workers); splash. The original PI agent (which the user's `tui-pi-agent` skill ports exactly: 18 keybindings, ModelSelector, ConfigSelector, @work lazy loading, 0.12s startup) was the earlier generation; this monorepo is v2+.
-- APEX copy: differential-rendering TUI; agent-hub component (APEX §30); lazy-loading discipline (0.12s claim from the PI generation — re-verify).
-- APEX improve: TUI as a thin client over the core protocol (APEX's Rust core should own the loop; TUI renders events).
+- ByteAi copy: differential-rendering TUI; agent-hub component (ByteAi §30); lazy-loading discipline (0.12s claim from the PI generation — re-verify).
+- ByteAi improve: TUI as a thin client over the core protocol (ByteAi's Rust core should own the loop; TUI renders events).
 
 ### Security (`secrets/`, `security/`, `cleanse/`, `tools/secrets-obfuscator` tests 3,645, `exec/non-interactive-env`)
 - what: secrets obfuscation (dedicated test suite), cleanse agent (sanitization), security module, non-interactive env for child processes.
-- APEX copy: secrets obfuscator; non-interactive env filtering (APEX §33); cleanse patterns.
-- APEX improve: prompt-injection detection on repo content/tool output (APEX §33); path restrictions; approval policies.
+- ByteAi copy: secrets obfuscator; non-interactive env filtering (ByteAi §33); cleanse patterns.
+- ByteAi improve: prompt-injection detection on repo content/tool output (ByteAi §33); path restrictions; approval policies.
 
 ### Compression (`compress/session.ts`)
 - what: session compression (LSP-aware — grep hit in compress/session.ts).
-- APEX copy: compression triggers; keep recent turns.
-- APEX improve: adopt jcode's threshold ladder + Hermes' aux-model summarization pattern.
+- ByteAi copy: compression triggers; keep recent turns.
+- ByteAi improve: adopt jcode's threshold ladder + Hermes' aux-model summarization pattern.
 
 ### Benchmarking (`typescript-edit-benchmark`, `catalog` tests, `tests/`)
 - what: cross-model edit benchmark package with results JSON; heavy test suites (agent-loop, retry-fallback, advisor, lsp-regressions, secrets-obfuscator, tools, acp-agent 3,311).
 - **Published claims**: the 0.12s-startup / 557-model claims trace to the PI-generation README/skills; in this repo, verify via `--smoke-test` (documented in AGENTS.md) — **PARTIALLY VERIFIED**: smoke tests exist; startup numbers must be reproduced.
-- APEX copy: edit-benchmark-with-results methodology; smoke-test contract for workers.
+- ByteAi copy: edit-benchmark-with-results methodology; smoke-test contract for workers.
 
 ### Failure recovery
 - what: retry-fallback tests; tool-timeouts; repair-args (repair malformed tool args); session maintenance.
-- APEX copy: tool-arg repair; timeout discipline.
-- APEX improve: failure-class taxonomy + changed-strategy retries (APEX §23).
+- ByteAi copy: tool-arg repair; timeout discipline.
+- ByteAi improve: failure-class taxonomy + changed-strategy retries (ByteAi §23).
 
-## 4. Verdict for APEX
+## 4. Verdict for ByteAi
 
 **Copy conceptually (top 5)**
 1. LSP-first editing with writethrough + diagnostics gating (the strongest "IDE-grade" pattern among all references).
 2. Multi-strategy edit engine: sloppy Lark grammar + replace/levenshtein fallbacks + normalization + line-hash verification + cross-model edit benchmarks.
-3. Rust natives for hot paths (grep/sed/find/shell) + TypeScript orchestration boundary — validates APEX's Rust-core + optional-modules split (APEX chooses Rust for the core loop AND these natives; orchestration stays in Rust, not TS).
+3. Rust natives for hot paths (grep/sed/find/shell) + TypeScript orchestration boundary — validates ByteAi's Rust-core + optional-modules split (ByteAi chooses Rust for the core loop AND these natives; orchestration stays in Rust, not TS).
 4. DAP client with adapter resolution + tool integration.
 5. Task executor with spawn-policy/provider-concurrency + advisor with loop-guard; prompts as static versioned .md files.
 
@@ -141,4 +141,4 @@ oh-my-pi/
 
 **Reject**: fork (build system weight, TS core); vendored proto surface; nvim-mason path discovery.
 
-**Reuse score: 8/10 as design reference (LSP/DAP/edit/task subsystems); 2/10 as fork base.** APEX should reimplement the LSP/DAP/edit/task patterns in Rust, not adopt the code.
+**Reuse score: 8/10 as design reference (LSP/DAP/edit/task subsystems); 2/10 as fork base.** ByteAi should reimplement the LSP/DAP/edit/task patterns in Rust, not adopt the code.

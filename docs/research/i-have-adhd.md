@@ -1,7 +1,7 @@
 # i-have-adhd — Research Notes
 
 > Source: https://github.com/ayghri/i-have-adhd (clone at `research/repos/i-have-adhd`, 2026-08-25)
-> Document purpose: Phase 0 research for APEX (ByteAi). Verified by reading actual files.
+> Document purpose: Phase 0 research for ByteAi (ByteAi). Verified by reading actual files.
 
 ## 1. Overview
 
@@ -54,7 +54,7 @@ The SKILL.md defines these output rules:
 - Single-platform hooks: Claude Code hooks differ from OpenCode plugins differ from Gemini extensions — no unified enforcement.
 - The SKILL.md is a prompt injection, not a compiled instruction: a determined model can ignore it.
 
-## 6. Verdict for APEX
+## 6. Verdict for ByteAi
 
 **Copy (exact rules to adopt)**:
 1. Default final output format: `1. What changed / 2. Verification / 3. Any blocker/risk / 4. Next action`
@@ -64,12 +64,12 @@ The SKILL.md defines these output rules:
 5. During work progress: surface meaningful progress without narrating every tool call.
 6. Interactive instructions: lead with action, short numbered steps, completed wins visible.
 
-**How APEX should encode these rules**:
-- **Primary**: as a system-level output format schema (APEX's TUI/CLI should enforce formatting at the display layer, not as a prompt instruction). The agent chooses the content; the display layer enforces the structure.
+**How ByteAi should encode these rules**:
+- **Primary**: as a system-level output format schema (ByteAi's TUI/CLI should enforce formatting at the display layer, not as a prompt instruction). The agent chooses the content; the display layer enforces the structure.
 - **Secondary**: the output rules (what changed / verification / blockers / next action) should be embedded in the system prompt as a short, versioned block.
-- **Third**: a verification hook should check that the model's final output follows the structure before delivery. If not, reformat it (APEX's display layer does this automatically).
+- **Third**: a verification hook should check that the model's final output follows the structure before delivery. If not, reformat it (ByteAi's display layer does this automatically).
 - **Reject**: hook-level enforcement that depends on platform-specific plugin APIs. Instead, make the output format a core harness invariant (like role alternation or prompt caching in Hermes).
 
 **Reject from i-have-adhd**:
-- "Always" rules that remove legitimate nuance (e.g., "always lead with the action" — sometimes context is needed first; APEX should default to action-first but allow context when genuinely necessary).
-- Platform-specific hook implementations — APEX handles this at the core level.
+- "Always" rules that remove legitimate nuance (e.g., "always lead with the action" — sometimes context is needed first; ByteAi should default to action-first but allow context when genuinely necessary).
+- Platform-specific hook implementations — ByteAi handles this at the core level.

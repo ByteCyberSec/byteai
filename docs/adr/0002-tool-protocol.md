@@ -20,6 +20,6 @@ MCP is supported for external extensibility only — core high-frequency tools a
 - MCP is second-class by design, keeping the hot path fast.
 
 ## Consequences
-- Tool schemas live in `apex-tools/` crate.
-- Failure taxonomy is defined as an enum in `apex-protocol/`.
+- Tool schemas live in `byteai-tools/` crate.
+- Failure taxonomy is defined as an enum in `byteai-protocol/`.
 - MCP adapter bridges external tools to the native dispatcher.

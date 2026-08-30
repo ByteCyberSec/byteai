@@ -30,6 +30,6 @@ code-review, to-spec, to-tickets) — not copied verbatim.
 - Verification steps in skills are advisory unless enforced by the harness.
 
 ## Consequences
-- Skill loader + lifecycle in `apex-skills/` crate.
-- Bundled skills shipped with the binary; user skills in `.apex/skills/`.
+- Skill loader + lifecycle in `byteai-skills/` crate.
+- Bundled skills shipped with the binary; user skills in `.byteai/skills/`.
 - `/skills`, `/learn`, `/forget` commands.

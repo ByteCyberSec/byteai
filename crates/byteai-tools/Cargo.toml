@@ -1,0 +1,22 @@
+[package]
+name = "byteai-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+regex = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+byteai-types = { workspace = true }
+byteai-provider = { path = "../byteai-provider" }
+byteai-lsp = { path = "../byteai-lsp" }
+byteai-dap = { path = "../byteai-dap" }
+byteai-memory = { path = "../byteai-memory" }
+byteai-ast = { path = "../byteai-ast" }
+reqwest = { workspace = true }
+toml = { workspace = true }

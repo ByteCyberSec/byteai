@@ -5,7 +5,7 @@ Date: 2026-08-25
 Supersedes: none (this ADR records the basis decision reached after Phase 0 research)
 
 ## Context
-APEX targets: cold start < 100 ms, idle RAM < 50 MB, no Python/Node dependency for
+ByteAi targets: cold start < 100 ms, idle RAM < 50 MB, no Python/Node dependency for
 basic operation, native LSP/DAP/search/edit engines. Phase 0 research (see
 `docs/research/architecture-comparison.md`) evaluated forking or reusing each
 reference project as the core.
@@ -23,7 +23,7 @@ Research findings:
 - **mattpocock/skills**, **i-have-adhd**: content packs, not harnesses.
 
 ## Decision
-**Clean Rust implementation.** No fork. APEX builds a fresh Rust core adopting the
+**Clean Rust implementation.** No fork. ByteAi builds a fresh Rust core adopting the
 concepts (not the code) of all six projects per the lineage table in
 `architecture-comparison.md`. Optional: ai-memory as an external companion for
 heavy cross-harness memory; never required for basic operation.

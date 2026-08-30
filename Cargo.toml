@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/apex-types", "crates/apex-provider", "crates/apex-tools", "crates/apex-core", "crates/apex-cli", "crates/apex-lsp", "crates/apex-ast", "crates/apex-dap", "crates/apex-memory"]
+members = ["crates/byteai-types", "crates/byteai-provider", "crates/byteai-tools", "crates/byteai-core", "crates/byteai-cli", "crates/byteai-lsp", "crates/byteai-ast", "crates/byteai-dap", "crates/byteai-memory"]
 
 [workspace.package]
 edition = "2024"
@@ -13,10 +13,10 @@ homepage = "https://github.com/ByteCyberSec/byteai"
 description = "ByteAi — fast autonomous coding agent: Rust core, optional power modules (LSP, DAP, memory, skills, multi-agent, routing, review)."
 
 [workspace.dependencies]
-apex-types = { path = "crates/apex-types" }
-apex-provider = { path = "crates/apex-provider" }
-apex-tools = { path = "crates/apex-tools" }
-apex-core = { path = "crates/apex-core" }
+byteai-types = { path = "crates/byteai-types" }
+byteai-provider = { path = "crates/byteai-provider" }
+byteai-tools = { path = "crates/byteai-tools" }
+byteai-core = { path = "crates/byteai-core" }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "charset"] }
 serde = { version = "1", features = ["derive"] }

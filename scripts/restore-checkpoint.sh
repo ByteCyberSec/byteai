@@ -40,4 +40,4 @@ for f in "$SRC"/config/*; do
   cp "$f" "$dst"
 done
 
-echo "✓ restored. Rebuild with: cd ~/byteai && cargo build --release -p apex-cli"
+echo "✓ restored. Rebuild with: cd ~/byteai && cargo build --release -p byteai-cli"

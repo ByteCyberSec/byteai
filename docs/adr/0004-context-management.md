@@ -22,6 +22,6 @@ For heavy compaction, optionally use an auxiliary (cheap) model to summarize mid
 - Flat image token cost avoids the accounting bug jcode discovered.
 
 ## Consequences
-- Constants live in `apex-context/` crate.
+- Constants live in `byteai-context/` crate.
 - Per-model context budgets from provider catalog.
 - Checkpoint/rewind (spec §25) uses the same budget tracking.

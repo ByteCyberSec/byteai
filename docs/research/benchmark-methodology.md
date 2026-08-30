@@ -1,6 +1,6 @@
-# APEX Benchmark Methodology
+# ByteAi Benchmark Methodology
 
-> Phase 0 deliverable. Defines reproducible benchmarks for APEX vs reference projects.
+> Phase 0 deliverable. Defines reproducible benchmarks for ByteAi vs reference projects.
 > All benchmarks must record: hardware, OS version, model, provider, date, agent version, settings.
 
 ## 1. Performance Benchmarks
@@ -24,7 +24,7 @@
 
 ### 1c. RAM per Additional Session
 - **Method**: Start N sessions, measure PSS, subtract baseline, divide by N.
-- **Target**: <20 MB per session for APEX.
+- **Target**: <20 MB per session for ByteAi.
 
 ### 1d. Search Latency
 - **Method**: Time to search a 10K-file repo for a known string, a regex, and a symbol.

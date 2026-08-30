@@ -9,7 +9,7 @@ Memory is essential for cross-session continuity and reducing repeated work. The
 ## Decision
 Hybrid memory system with four layers:
 - Layer A (working state): tiny, in-memory, contains current objective/plan/progress/blockers/next action.
-- Layer B (project knowledge): Markdown files in `.apex/memory/wiki/`, durable facts, architecture, conventions, testing commands, traps.
+- Layer B (project knowledge): Markdown files in `.byteai/memory/wiki/`, durable facts, architecture, conventions, testing commands, traps.
 - Layer C (episodic): session observations compiled into Markdown summaries + SQLite/FTS5 index.
 - Layer D (procedural): skills (SKILL.md files).
 
@@ -30,6 +30,6 @@ Conflict handling: each durable memory entry supports source/created_at/updated_
 - Markdown wiki is user-editable and portable.
 
 ## Consequences
-- Memory module lives in `apex-memory/` crate.
-- SQLite schema in `apex-session/` for session store; `apex-memory/` for memory index.
+- Memory module lives in `byteai-memory/` crate.
+- SQLite schema in `byteai-session/` for session store; `byteai-memory/` for memory index.
 - Optional companion process: ai-memory can be used for heavy cross-harness memory.

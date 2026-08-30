@@ -1,8 +1,8 @@
-# APEX Feature Matrix (reference projects vs APEX target)
+# ByteAi Feature Matrix (reference projects vs ByteAi target)
 
-Legend: ✅ = present (verified in source), ⚠️ = partial/limited, ❌ = absent, 🎯 = APEX target (this column is the spec, not current implementation)
+Legend: ✅ = present (verified in source), ⚠️ = partial/limited, ❌ = absent, 🎯 = ByteAi target (this column is the spec, not current implementation)
 
-| Mechanism | jcode | oh-my-pi | mattpocock/skills | i-have-adhd | ai-memory | hermes-agent | 🎯 APEX |
+| Mechanism | jcode | oh-my-pi | mattpocock/skills | i-have-adhd | ai-memory | hermes-agent | 🎯 ByteAi |
 |---|---|---|---|---|---|---|---|
 | Language / runtime | Rust | Rust natives + TS core | Markdown | Markdown+JS | Rust | Python | Rust core |
 | Agent loop (turn → model → tools) | ✅ server.rs/live_turn | ✅ agent-session.ts | ❌ (procedure only) | ❌ | ❌ (memory server) | ✅ conversation_loop.py | ✅ phase state machine |

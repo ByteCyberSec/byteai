@@ -32,6 +32,6 @@ vLLM, custom OpenAI-compatible endpoints (local-first: OmniRoute at :20128).
 - Requires outcome tracking per model per task class (stats table).
 
 ## Consequences
-- Router in `apex-router/` crate; provider abstraction in `apex-provider/`.
-- Stats persisted in SQLite (`apex-session/` schema extension).
+- Router in `byteai-router/` crate; provider abstraction in `byteai-provider/`.
+- Stats persisted in SQLite (`byteai-session/` schema extension).
 - User can pin a model per role (`/model`).

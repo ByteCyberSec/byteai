@@ -7,7 +7,7 @@ target/
 *.db
 *.db-wal
 *.db-shm
-.apex/
+.byteai/
 .checkpoints/
 
 # Vendored reference clones (kept locally, not part of the build)

@@ -1,7 +1,7 @@
 # ai-memory — Research Notes
 
 > Source: https://github.com/akitaonrails/ai-memory (clone at `research/repos/ai-memory`, 2026-08-25)
-> Document purpose: Phase 0 research for APEX (ByteAi). Verified by reading source layout + key files.
+> Document purpose: Phase 0 research for ByteAi (ByteAi). Verified by reading source layout + key files.
 
 ## 1. Overview
 
@@ -80,7 +80,7 @@ The AGENTS.md documents: "Retrieval is FTS5 + lexical entity-match + link-neighb
 
 ### Conflict handling
 - Not explicitly found in the shallow scan (no `superseded_by` field visible in the observation schema). The auto-improvement loop may handle conflicts implicitly.
-- **APEX gap**: ai-memory does not have explicit conflict resolution (forget/invalidate/replace/merge/expire). APEX must add this.
+- **ByteAi gap**: ai-memory does not have explicit conflict resolution (forget/invalidate/replace/merge/expire). ByteAi must add this.
 
 ## 4. Session Handoff
 
@@ -100,7 +100,7 @@ The AGENTS.md documents: "Retrieval is FTS5 + lexical entity-match + link-neighb
 - **Rust binary**: single binary, no runtime dependency. ~10-20 MB binary.
 - **Startup**: fast (Rust binary, SQLite WAL).
 - **Memory**: moderate (SQLite is memory-mapped; embeddings are optional and lazily loaded).
-- **Rust buys**: determinism, fast startup, small binary, cross-platform, no Python/Node dependency (crucial for APEX's "no Python/Node required" mandate).
+- **Rust buys**: determinism, fast startup, small binary, cross-platform, no Python/Node dependency (crucial for ByteAi's "no Python/Node required" mandate).
 - **Lazy vs eager**: embeddings are lazy (optional provider); LLM consolidation is on-timer or on-event; hooks are fire-and-forget bounded.
 
 ## 7. Tests & Evals
@@ -119,24 +119,24 @@ The AGENTS.md documents: "Retrieval is FTS5 + lexical entity-match + link-neighb
 4. **Per-project isolation is by `(workspace_id, project_id, path)`** — requires the agent to know its project context; this is well-designed but adds setup friction.
 5. **No storage-level embeddings** — the embedding index is in SQLite, not a dedicated vector DB, which limits recall at very large scale.
 
-## 9. Verdict for APEX
+## 9. Verdict for ByteAi
 
 **Copy conceptually (top 5)**
 1. Markdown as source of truth + SQLite/FTS5 as derived index ("compile, not retrieve"). This is the single best memory architecture among all reference projects.
 2. Truly optional embeddings: zero-LLM mode works; retrieval works without vectors.
-3. Cross-agent lifecycle hooks (20+ agents supported) — APEX can use the same hook pattern for its own agent interface.
+3. Cross-agent lifecycle hooks (20+ agents supported) — ByteAi can use the same hook pattern for its own agent interface.
 4. Bounded observation capture (16 KiB prompts, 2 KB tool excerpts, 16 KiB backstop) — prevents memory bloat.
-5. Per-project isolation by (workspace, project, path) — matches APEX's multi-project requirement.
+5. Per-project isolation by (workspace, project, path) — matches ByteAi's multi-project requirement.
 
 **Improve**
 1. Add explicit conflict resolution: `superseded_by`, `expires_at`, `forget/invalidate/replace/merge` operations.
 2. Add a dedicated entity graph (ai-memory has entity/page links but not a full graph for querying).
 3. Make the hook router simpler — 11,968 lines is too much for hook dispatch.
-4. Keep the MCP server thin (ai-memory's MCP admin is 10,362 lines — APEX should keep MCP thin per §32).
+4. Keep the MCP server thin (ai-memory's MCP admin is 10,362 lines — ByteAi should keep MCP thin per §32).
 
 **Reject**
-- Forking the project: ai-memory is a standalone memory server, not a coding agent harness. APEX's memory subsystem should be a module inside the core, not a separate server — although ai-memory's MCP-surface design means it CAN be used as a companion process.
-- The 162-file hook system: APEX needs a single, clean hook interface per agent type, not 162 files.
-- Keeping the giant files (11K+ router, 10K+ admin, 8K+ reader, 8K+ ops) — APEX should split into focused modules.
+- Forking the project: ai-memory is a standalone memory server, not a coding agent harness. ByteAi's memory subsystem should be a module inside the core, not a separate server — although ai-memory's MCP-surface design means it CAN be used as a companion process.
+- The 162-file hook system: ByteAi needs a single, clean hook interface per agent type, not 162 files.
+- Keeping the giant files (11K+ router, 10K+ admin, 8K+ reader, 8K+ ops) — ByteAi should split into focused modules.
 
-**Reuse score: 8/10 as design reference; 6/10 as companion process.** The memory model (Markdown+SQLite+FTS+optional+embeddings+compile-not-retrieve) is the best design among all references and should be APEX's memory architecture. The actual binary can be used as a companion/memory-server (`ai-memory serve` → APEX talks to it over MCP), but APEX should also own a lightweight embedded store for sessions and working state directly (no external process dependency for basic operation).
+**Reuse score: 8/10 as design reference; 6/10 as companion process.** The memory model (Markdown+SQLite+FTS+optional+embeddings+compile-not-retrieve) is the best design among all references and should be ByteAi's memory architecture. The actual binary can be used as a companion/memory-server (`ai-memory serve` → ByteAi talks to it over MCP), but ByteAi should also own a lightweight embedded store for sessions and working state directly (no external process dependency for basic operation).

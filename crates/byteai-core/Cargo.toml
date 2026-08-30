@@ -1,0 +1,17 @@
+[package]
+name = "byteai-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+byteai-types = { workspace = true }
+byteai-provider = { workspace = true }
+byteai-tools = { workspace = true }
+byteai-memory = { path = "../byteai-memory" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }

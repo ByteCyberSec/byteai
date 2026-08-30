@@ -11,7 +11,7 @@ files, and interact with the network; compromise must be contained.
 ## Decision
 Layered security model:
 1. **Command approval policies**: configurable approval levels (auto/ask/deny) per
-   command class (read, write, destructive, network). `apex-command-risk` scoring
+   command class (read, write, destructive, network). `byteai-command-risk` scoring
    (jcode-inspired) as a pre-approval heuristic.
 2. **Secret redaction**: secrets redacted from tool output and memory capture
    (hermes redact + oh-my-pi secrets-obfuscator patterns). Never commit secrets.
@@ -39,6 +39,6 @@ Layered security model:
 - Sandboxing is opt-in for heavy isolation.
 
 ## Consequences
-- Security module in `apex-security/` crate; risk scorer in `apex-tools/`.
+- Security module in `byteai-security/` crate; risk scorer in `byteai-tools/`.
 - Injection detection is a heuristic, documented as such (not a guarantee).
-- Subagent permission scopes enforced by the coordinator (`apex-subagent/`).
+- Subagent permission scopes enforced by the coordinator (`byteai-subagent/`).

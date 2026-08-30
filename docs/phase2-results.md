@@ -4,8 +4,8 @@
 LSP client, AST symbol extraction, smart reads, symbol search, multi-strategy edit engine, edit+diagnostics repair loop.
 
 ## Deliverables
-- **apex-lsp** crate: JSON-RPC 2.0 client over stdio, language server registry, diagnostics/symbols/hover/definition/references/rename/formatting
-- **apex-ast** crate: Tree-sitter symbol extraction for 7 languages (Rust, Python, TS, JS, Go, C, C++)
+- **byteai-lsp** crate: JSON-RPC 2.0 client over stdio, language server registry, diagnostics/symbols/hover/definition/references/rename/formatting
+- **byteai-ast** crate: Tree-sitter symbol extraction for 7 languages (Rust, Python, TS, JS, Go, C, C++)
 - Extended **edit** tool: exact → contextual → whole-file strategies, LSP diagnostics validation
 - Extended **read** tool: symbols/function/imports AST modes
 - Extended **search** tool: `mode=symbol` (AST-based definition search)
@@ -17,7 +17,7 @@ LSP client, AST symbol extraction, smart reads, symbol search, multi-strategy ed
 - **26 tests**, all passing: 9 AST + 4 LSP (incl. 2 live clangd integration tests) + 13 tools
 
 ## Verification
-- LSP symbols on apex-core: 21 symbols, correct kinds, line numbers
+- LSP symbols on byteai-core: 21 symbols, correct kinds, line numbers
 - LSP diagnostics on C error: `1 errors, 0 warnings: E 1:21 Incompatible pointer to integer conversion`
 - EDIT → diagnostics → repair loop: edit introduces error → LSP catches it → warns model
 - Contextual edit: whitespace-tolerant matching (indented `let   msg   =   "hello"` → matched)

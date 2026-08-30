@@ -3,7 +3,7 @@
 ## Delivered
 
 `byteai` release binary (8.6 MB) at `target/release/byteai`. Workspace: 5 crates
-(apex-types, apex-provider, apex-tools, apex-core, apex-cli).
+(byteai-types, byteai-provider, byteai-tools, byteai-core, byteai-cli).
 
 | Capability | Status |
 |---|---|
@@ -19,7 +19,7 @@
 | REPL | ✅ /help /model /new /usage /quit |
 | TUI | ✅ minimal ratatui (feature `tui`, default on) |
 | ADHD output format | ✅ system prompt enforces What changed / Verification / Blockers / Next action |
-| Tests | ✅ 2/2 apex-types wire-format tests |
+| Tests | ✅ 2/2 byteai-types wire-format tests |
 
 ## Measured (macOS 14.5, Apple Silicon, release build)
 

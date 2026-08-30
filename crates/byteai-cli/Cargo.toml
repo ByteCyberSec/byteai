@@ -1,0 +1,44 @@
+[package]
+name = "byteai-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "byteai"
+path = "src/main.rs"
+
+[dependencies]
+byteai-types = { workspace = true }
+byteai-provider = { workspace = true }
+byteai-tools = { workspace = true }
+byteai-core = { workspace = true }
+byteai-lsp = { path = "../byteai-lsp" }
+byteai-dap = { path = "../byteai-dap" }
+byteai-memory = { path = "../byteai-memory" }
+tokio = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+dirs = { workspace = true }
+toml = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[features]
+default = ["tui"]
+tui = ["dep:ratatui", "dep:crossterm"]
+
+[dependencies.ratatui]
+version = "0.29"
+optional = true
+# line_count() gives the EXACT wrapped row count ratatui will render (word
+# wrap), so the chat scroll can pin precisely to the newest content instead
+# of drifting when long words/URLs wrap differently than a char estimate.
+features = ["unstable-rendered-line-info"]
+
+[dependencies.crossterm]
+version = "0.28"
+optional = true

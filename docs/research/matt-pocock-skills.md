@@ -1,7 +1,7 @@
 # mattpocock/skills — Research Notes
 
 > Source: https://github.com/mattpocock/skills (clone at `research/repos/mattpocock-skills`, 2026-08-25)
-> Document purpose: Phase 0 research for APEX (ByteAi). Verified by reading actual skill files.
+> Document purpose: Phase 0 research for ByteAi (ByteAi). Verified by reading actual skill files.
 
 ## 1. Overview
 
@@ -86,39 +86,39 @@ Key observations:
 - **What**: Before coding, the agent asks the user structured questions: desired behavior, users, inputs, outputs, edge cases, failure modes, acceptance criteria. Grill-with-docs also checks living docs.
 - **Why it works**: Reduces wrong-implementation rework by clarifying requirements upfront.
 - **Weaknesses**: Relies on the user being available and patiently answering; no codebase-first investigation (the prompt says "investigate first, ask only what the codebase can't answer" — but the skill doesn't enforce this procedurally).
-- **APEX copy**: The grilling question set as a /grill command. The "investigate first" rule — APEX must enforce it programmatically (run search/grep before asking).
-- **APEX improve**: Auto-investigate before asking; learn the user's preferences (what questions they always answer the same way); produce a spec document from the answers.
+- **ByteAi copy**: The grilling question set as a /grill command. The "investigate first" rule — ByteAi must enforce it programmatically (run search/grep before asking).
+- **ByteAi improve**: Auto-investigate before asking; learn the user's preferences (what questions they always answer the same way); produce a spec document from the answers.
 
 ### Domain-modeling / Codebase-design
 - **What**: Build a shared domain language before coding; maintain CONTEXT.md + ADRs. Deep modules (small interfaces, deep behavior).
-- **APEX copy**: CONTEXT.md + ADR discipline; the "shared domain language" concept.
-- **APEX improve**: auto-generate from codebase analysis (LSP symbols, imports); auto-detect domain drift.
+- **ByteAi copy**: CONTEXT.md + ADR discipline; the "shared domain language" concept.
+- **ByteAi improve**: auto-generate from codebase analysis (LSP symbols, imports); auto-detect domain drift.
 
 ### TDD
 - **What**: Red-green-refactor workflow. Write failing test first, then minimal code, then refactor.
-- **APEX copy**: TDD mode (prefer tests before code; enforce for behavior changes).
-- **APEX improve**: auto-detect whether TDD fits the task (greenfield feature → yes; quick fix → no); dependency-aware test selection.
+- **ByteAi copy**: TDD mode (prefer tests before code; enforce for behavior changes).
+- **ByteAi improve**: auto-detect whether TDD fits the task (greenfield feature → yes; quick fix → no); dependency-aware test selection.
 
 ### Diagnosing-bugs
 - **What**: Always diagnose before modifying. Reproduce → observe → hypothesize → instrument → test hypothesis → locate root cause → minimal fix → verify → regression test.
 - **Why it works**: The universal debug cycle, encoded as procedure.
-- **APEX copy**: the debug loop verbatim; the "never randomly modify code until tests pass" rule.
-- **APEX improve**: integrate with DAP debugger (APEX §5); instrument non-invasively (print/logger with auto-cleanup).
+- **ByteAi copy**: the debug loop verbatim; the "never randomly modify code until tests pass" rule.
+- **ByteAi improve**: integrate with DAP debugger (ByteAi §5); instrument non-invasively (print/logger with auto-cleanup).
 
 ### Handoff
 - **What**: Compact the conversation into a handoff: objective, current state, completed work, changed files, decisions, failed approaches, open questions, next action.
-- **APEX copy**: handoff format verbatim; auto-generate at session end (APEX §16).
-- **APEX improve**: structured JSON schema for machine consumption; auto-write to `.apex/` dir.
+- **ByteAi copy**: handoff format verbatim; auto-generate at session end (ByteAi §16).
+- **ByteAi improve**: structured JSON schema for machine consumption; auto-write to `.byteai/` dir.
 
 ### To-spec / To-tickets
 - **What**: Turn conversation into a formal spec or ticket set.
-- **APEX copy**: spec format (goal, non-goals, requirements, constraints, architecture, data model, interfaces, edge cases, tests, acceptance criteria).
-- **APEX improve**: make specs executable (another agent can implement from the spec without talking to the user).
+- **ByteAi copy**: spec format (goal, non-goals, requirements, constraints, architecture, data model, interfaces, edge cases, tests, acceptance criteria).
+- **ByteAi improve**: make specs executable (another agent can implement from the spec without talking to the user).
 
 ### Code-review
 - **What**: Review changes since a fixed point. Structured: correctness, security, architecture, tests.
-- **APEX copy**: review checklist; commit/branch anchoring.
-- **APEX improve**: independent reviewer agent (APEX §12); severity classification (INFO/WARNING/BLOCKER).
+- **ByteAi copy**: review checklist; commit/branch anchoring.
+- **ByteAi improve**: independent reviewer agent (ByteAi §12); severity classification (INFO/WARNING/BLOCKER).
 
 ## 5. How the Pack Works at Runtime
 
@@ -128,14 +128,14 @@ Key observations:
 - **Strength**: simple, portable, model-agnostic.
 - **Weakness**: no versioning, no dependency resolution, no testing, no failure handling, no verification gates. The model must "follow instructions" — no enforcement.
 
-## 6. Verdict for APEX
+## 6. Verdict for ByteAi
 
 **Copy conceptually (top 5)**
-1. SKILL.md format (frontmatter + trigger + procedure) — APEX's skill system (§17) should use this exact format.
+1. SKILL.md format (frontmatter + trigger + procedure) — ByteAi's skill system (§17) should use this exact format.
 2. Engineering discipline procedure content: grilling, diagnosing-bugs, domain-modeling, ADRs, TDD, handoff, code-review, spec-to-tickets — embed these as built-in/optional skills.
-3. Trigger discipline: "When to Use" sections — APEX's skill router should match these.
+3. Trigger discipline: "When to Use" sections — ByteAi's skill router should match these.
 4. Handoff format (objective/state/completed/decisions/open-questions/next-action).
-5. Grill questions set — APEX's /grill command.
+5. Grill questions set — ByteAi's /grill command.
 
 **Weaknesses**
 - No verification, no failure handling, no versioning, no dependency resolution.
@@ -146,6 +146,6 @@ Key observations:
 
 **Improve**: add verification steps, failure handling, test data, versioned frontmatter, output schemas, dependency fields.
 
-**Reject**: the assumption of Claude Code as the only host; the lack of structured output. APEX must reimplement the procedures as native skills with versioning, verification, and testing.
+**Reject**: the assumption of Claude Code as the only host; the lack of structured output. ByteAi must reimplement the procedures as native skills with versioning, verification, and testing.
 
-**Reuse**: embed the SKILL.md content as the PROCEDURE portion of APEX skills (trigger + purpose + procedure). Do NOT use the skill files directly since they reference Claude Code-specific paths and commands. Reimplement the philosophy, not the files.
+**Reuse**: embed the SKILL.md content as the PROCEDURE portion of ByteAi skills (trigger + purpose + procedure). Do NOT use the skill files directly since they reference Claude Code-specific paths and commands. Reimplement the philosophy, not the files.

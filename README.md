@@ -158,7 +158,7 @@ FAST CORE + INTELLIGENT ORCHESTRATION + OPTIONAL POWER MODULES
 
 - `docs/adr/` — Architecture Decision Records
 - `docs/research/` — Per-project research notes + architecture comparison + feature matrix + benchmark methodology
-- `docs/apex-intelligence.md` — /Ideas and /Github intelligence engine doctrine
+- `docs/byteai-intelligence.md` — /Ideas and /Github intelligence engine doctrine
 
 ---
 

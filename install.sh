@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ByteAi — one-command install for a fresh machine.
 #
-#   curl -fsSL https://raw.githubusercontent.com/byteai/byteai/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/ByteCyberSec/byteai/main/install.sh | bash
 #
 # Builds the release binary with cargo and installs it to ~/.local/bin (or
 # $PREFIX/bin). Requires: Rust toolchain (rustup) + git.
@@ -19,7 +19,7 @@ fi
 mkdir -p "$BIN_DIR"
 
 # ── source ────────────────────────────────────────────────────────────────────
-REPO_URL="${BYTEAI_REPO_URL:-https://github.com/byteai/byteai.git}"
+REPO_URL="${BYTEAI_REPO_URL:-https://github.com/ByteCyberSec/byteai.git}"
 BRANCH="${BYTEAI_BRANCH:-main}"
 SRC_DIR="${BYTEAI_SRC_DIR:-$(mktemp -d)/byteai}"
 

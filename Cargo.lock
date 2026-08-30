@@ -95,141 +95,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "apex-ast"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "tree-sitter",
- "tree-sitter-c",
- "tree-sitter-cpp",
- "tree-sitter-go",
- "tree-sitter-javascript",
- "tree-sitter-python",
- "tree-sitter-rust",
- "tree-sitter-typescript",
-]
-
-[[package]]
-name = "apex-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "apex-core",
- "apex-dap",
- "apex-lsp",
- "apex-memory",
- "apex-provider",
- "apex-tools",
- "apex-types",
- "chrono",
- "clap",
- "crossterm",
- "dirs",
- "ratatui",
- "serde",
- "serde_json",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "apex-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "apex-memory",
- "apex-provider",
- "apex-tools",
- "apex-types",
- "chrono",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "apex-dap"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "apex-lsp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "apex-memory"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "apex-provider"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "apex-types",
- "futures-util",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "apex-tools"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "apex-ast",
- "apex-dap",
- "apex-lsp",
- "apex-memory",
- "apex-provider",
- "apex-types",
- "chrono",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "toml",
- "tracing",
-]
-
-[[package]]
-name = "apex-types"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -258,6 +123,141 @@ name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
+
+[[package]]
+name = "byteai-ast"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tree-sitter",
+ "tree-sitter-c",
+ "tree-sitter-cpp",
+ "tree-sitter-go",
+ "tree-sitter-javascript",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+]
+
+[[package]]
+name = "byteai-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "byteai-core",
+ "byteai-dap",
+ "byteai-lsp",
+ "byteai-memory",
+ "byteai-provider",
+ "byteai-tools",
+ "byteai-types",
+ "chrono",
+ "clap",
+ "crossterm",
+ "dirs",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "byteai-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "byteai-memory",
+ "byteai-provider",
+ "byteai-tools",
+ "byteai-types",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "byteai-dap"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "byteai-lsp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "byteai-memory"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "byteai-provider"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "byteai-types",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "byteai-tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "byteai-ast",
+ "byteai-dap",
+ "byteai-lsp",
+ "byteai-memory",
+ "byteai-provider",
+ "byteai-types",
+ "chrono",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "byteai-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "bytes"

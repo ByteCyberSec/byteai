@@ -1,4 +1,4 @@
-# ByteAi (APEX) — All Phases Complete
+# ByteAi (ByteAi) — All Phases Complete
 
 Date: 2026-08-25
 
@@ -17,11 +17,11 @@ execution (not just compiled).
 | 1 | Minimal fast agent (2.8 MB cold RSS) | COMPLETE |
 | 2 | Code intelligence (LSP, AST, smart search/read/edit) | COMPLETE (26 tests) |
 | 3 | **Verification** — `verify` tool: project detection (cargo/npm/py/go), test + typecheck gate, LSP diagnostics, PASS/FAIL verdict | COMPLETE |
-| 4 | **Debugging** — `apex-dap` crate (DAP client), `debug` tool (launch/breakpoints/continue/stack/vars), debugpy stdio adapter | COMPLETE |
-| 5 | **Memory** — `apex-memory` crate (SQLite+FTS5: notes/wiki/entities/sessions), `memory` tool (write/search/list/get/delete) | COMPLETE (2 tests) |
+| 4 | **Debugging** — `byteai-dap` crate (DAP client), `debug` tool (launch/breakpoints/continue/stack/vars), debugpy stdio adapter | COMPLETE |
+| 5 | **Memory** — `byteai-memory` crate (SQLite+FTS5: notes/wiki/entities/sessions), `memory` tool (write/search/list/get/delete) | COMPLETE (2 tests) |
 | 6 | **Skills** — `skills` tool: SKILL.md discovery, load, lesson capture (create), delete | COMPLETE |
 | 7 | **Multi-agent** — `spawn` tool: N parallel `byteai chat` sub-agents, bounded concurrency, collected results | COMPLETE |
-| 8 | **Smart router** — `apex-provider/router.rs`: task classification (fast/code/reasoning/memory), capability-based model ranking, learned success-rate stats | COMPLETE (3 tests) |
+| 8 | **Smart router** — `byteai-provider/router.rs`: task classification (fast/code/reasoning/memory), capability-based model ranking, learned success-rate stats | COMPLETE (3 tests) |
 | 9 | **Reviewer** — `review` tool: independent verification agent (structural checks, cargo check, LSP diagnostics, PASS/FAIL) | COMPLETE |
 | 10 | **Polish** — `doctor` extended (providers, LSP, DAP adapters, memory stats), smoke tests | COMPLETE (5 tests) |
 
@@ -36,17 +36,17 @@ execution (not just compiled).
 
 ## Test Totals
 
-25 tests across 8 crates: apex-ast (9), apex-lsp (4), apex-provider (3),
-apex-memory (2), apex-tools (5 smoke), apex-tools unit (0), apex-dap (0),
-apex-core (0) — 25 passed, 0 failed.
+25 tests across 8 crates: byteai-ast (9), byteai-lsp (4), byteai-provider (3),
+byteai-memory (2), byteai-tools (5 smoke), byteai-tools unit (0), byteai-dap (0),
+byteai-core (0) — 25 passed, 0 failed.
 
 ## Files
 
-- `crates/apex-tools/src/verify.rs` — Phase 3
-- `crates/apex-dap/` + `crates/apex-tools/src/debug.rs` — Phase 4
-- `crates/apex-memory/` + `crates/apex-tools/src/memory.rs` — Phase 5
-- `crates/apex-tools/src/skills.rs` — Phase 6
-- `crates/apex-tools/src/spawn.rs` — Phase 7
-- `crates/apex-provider/src/router.rs` — Phase 8
-- `crates/apex-tools/src/review.rs` — Phase 9
-- `crates/apex-cli/src/main.rs` (doctor), `crates/apex-tools/tests/smoke.rs` — Phase 10
+- `crates/byteai-tools/src/verify.rs` — Phase 3
+- `crates/byteai-dap/` + `crates/byteai-tools/src/debug.rs` — Phase 4
+- `crates/byteai-memory/` + `crates/byteai-tools/src/memory.rs` — Phase 5
+- `crates/byteai-tools/src/skills.rs` — Phase 6
+- `crates/byteai-tools/src/spawn.rs` — Phase 7
+- `crates/byteai-provider/src/router.rs` — Phase 8
+- `crates/byteai-tools/src/review.rs` — Phase 9
+- `crates/byteai-cli/src/main.rs` (doctor), `crates/byteai-tools/tests/smoke.rs` — Phase 10

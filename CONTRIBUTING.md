@@ -15,7 +15,7 @@ cargo test
 
 - Format with `cargo fmt`
 - Lint with `cargo clippy -- -D warnings`
-- Follow the existing crate structure (`crates/apex-*`)
+- Follow the existing crate structure (`crates/byteai-*`)
 - Keep the agent fast — cold start < 100 ms and low RAM are core values
 
 ## Testing
@@ -26,22 +26,22 @@ cargo test --release
 ```
 
 Every change must keep the test suite green. Add tests for new tools and
-commands (see `crates/apex-tools/src/*.rs` `#[cfg(test)]` modules for the
+commands (see `crates/byteai-tools/src/*.rs` `#[cfg(test)]` modules for the
 pattern).
 
 ## Adding a New Tool
 
-1. Create `crates/apex-tools/src/<name>.rs`
+1. Create `crates/byteai-tools/src/<name>.rs`
 2. Implement the `Tool` trait (`name`, `def`, `execute`)
-3. Register it in `crates/apex-tools/src/lib.rs`
+3. Register it in `crates/byteai-tools/src/lib.rs`
 4. Add unit tests in the same file
-5. Add a toolcard sigil in `crates/apex-cli/src/toolcards.rs` (monochrome, no emoji)
+5. Add a toolcard sigil in `crates/byteai-cli/src/toolcards.rs` (monochrome, no emoji)
 
 ## Adding a Slash Command
 
-1. Add the command to the TUI palette `COMMANDS` in `crates/apex-cli/src/tui.rs`
+1. Add the command to the TUI palette `COMMANDS` in `crates/byteai-cli/src/tui.rs`
 2. Handle it in the TUI `handle_command` match
-3. Add it to the REPL match in `crates/apex-cli/src/main.rs`
+3. Add it to the REPL match in `crates/byteai-cli/src/main.rs`
 4. Keep `every_palette_command_is_handled` test green
 
 ## Commit Convention

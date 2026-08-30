@@ -18,6 +18,6 @@ Multi-strategy edit engine with fallback: exact match → contextual match → s
 - Validation adds latency per edit; prevents compounding errors.
 
 ## Consequences
-- Edit engine lives in `apex-edit/` crate.
+- Edit engine lives in `byteai-edit/` crate.
 - Grammar for sloppy format defined in a `.lark` file (or equivalent parser).
 - Edit validation calls LSP diagnostics and typechecker optionally.
