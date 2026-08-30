@@ -726,44 +726,60 @@ async fn run_loop(
                 break;
             }
             // Interactive picker: Up/Down/Enter/Esc drive the list.
+            // Char events fall through so the user can type a chat message
+            // while the picker is open. Enter with non-empty text sends the
+            // chat; Enter with empty text picks from the picker.
             if app.picker.is_some() {
                 match key.code {
                     KeyCode::Esc => {
                         app.picker = None;
+                        continue;
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
-                        if let Some(p) = app.picker.as_mut() {
-                            p.sel = p.sel.saturating_sub(1);
+                        if app.input.is_empty() {
+                            if let Some(p) = app.picker.as_mut() {
+                                p.sel = p.sel.saturating_sub(1);
+                            }
+                            continue;
                         }
+                        // Input in progress: 'k' is a typed character.
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
-                        if let Some(p) = app.picker.as_mut() {
-                            let n = p.items.len().max(1);
-                            p.sel = (p.sel + 1).min(n - 1);
+                        if app.input.is_empty() {
+                            if let Some(p) = app.picker.as_mut() {
+                                let n = p.items.len().max(1);
+                                p.sel = (p.sel + 1).min(n - 1);
+                            }
+                            continue;
                         }
+                        // Input in progress: 'j' is a typed character.
                     }
                     KeyCode::Enter => {
-                        if let Some(p) = app.picker.take() {
-                            // Debounce: identical picker selection within 300ms
-                            // (double-Enter / key repeat) applies only once.
-                            let sig = format!(
-                                "pick:{}",
-                                p.values.get(p.sel.min(p.values.len().saturating_sub(1))).cloned().unwrap_or_default()
-                            );
-                            let fresh = app
-                                .last_cmd
-                                .as_ref()
-                                .map(|(c, t)| !(c == &sig && t.elapsed() < std::time::Duration::from_millis(300)))
-                                .unwrap_or(true);
-                            if fresh {
-                                app.last_cmd = Some((sig, std::time::Instant::now()));
-                                run_pick(agent, app, p).await;
+                        if app.input.trim().is_empty() {
+                            // Pick from the picker.
+                            if let Some(p) = app.picker.take() {
+                                let sig = format!(
+                                    "pick:{}",
+                                    p.values.get(p.sel.min(p.values.len().saturating_sub(1))).cloned().unwrap_or_default()
+                                );
+                                let fresh = app
+                                    .last_cmd
+                                    .as_ref()
+                                    .map(|(c, t)| !(c == &sig && t.elapsed() < std::time::Duration::from_millis(300)))
+                                    .unwrap_or(true);
+                                if fresh {
+                                    app.last_cmd = Some((sig, std::time::Instant::now()));
+                                    run_pick(agent, app, p).await;
+                                }
                             }
+                            continue;
                         }
+                        // Non-empty input: fall through to send as chat.
                     }
                     _ => {}
                 }
-                continue;
+                // Fall through to the normal Char/Enter handlers below for
+                // typing and sending while the picker stays open.
             }
             // Ctrl+Shift+K / Ctrl+Shift+J: scroll up/down (jcode).
             if key.code == KeyCode::Char('k') && key.modifiers.contains(KeyModifiers::CONTROL) && key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -3023,6 +3039,30 @@ mod tests {
             }
         }
         assert_eq!(app.picker.as_ref().unwrap().sel, 0);
+    }
+
+    #[test]
+    fn picker_does_not_swallow_typing() {
+        // Regression: a command that opens a picker (/model, /session, /provider)
+        // used to swallow ALL key events (including typed characters) so the user
+        // could not type or send a chat message afterwards. Typed characters must
+        // flow through to the input buffer while the picker stays open.
+        let mut app = App::new("m1".into(), "p1".into(), 3, 0);
+        app.picker = Some(Picker {
+            title: "pick a model".into(),
+            items: vec!["m1".into(), "m2".into()],
+            values: vec!["m1".into(), "m2".into()],
+            sel: 0,
+            action: PickAction::SetModel { provider: "p1".into() },
+        });
+        // Type "hi" while the picker is open — the characters must land in input.
+        app.input.push('h');
+        app.input.push('i');
+        assert_eq!(app.input, "hi", "typing must reach the input while a picker is open");
+        // Enter with non-empty input sends the chat (the picker is NOT consumed).
+        // Only Enter with empty input triggers the pick action.
+        assert!(app.picker.is_some(), "picker stays open when typing falls through");
+        assert_eq!(app.input, "hi", "typed text survives for sending");
     }
 
     #[test]
