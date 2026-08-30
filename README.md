@@ -18,6 +18,10 @@
 - **LSP-aware editing** — smart reads, patches, completions (Cargo, TypeScript, Python, Go, Rust)
 - **DAP debugging** — multi-language debugger integration
 - **Multi-agent delegation** — spawn up to 1000 parallel subagents, round-robin across providers, dead-provider detection, automatic retry
+- **Persistent terminal** — `/terminal` keeps shell sessions alive with state (cwd, env, history) surviving across tool calls
+- **Context spill** — oversized tool output is auto-saved to a spill artifact + bounded preview + locator (no silent truncation, no context rot)
+- **Durable goal** — `/goal` sets one completion objective that survives restart/resume and anchors auto-continue
+- **Feedback** — `/feedback` records human remarks + per-message ratings as signals about output (never fed to the model)
 - **Memory hub** — persistent SQLite+FTS5 memory across sessions (L0 conversations, L1 atomics, L2 scenarios, L3 persona, skills)
 - **Skills system** — load/install SKILL.md files, engineering discipline, lesson capture
 - **Terminal UI** — oh-my-pi inspired TUI with command palette, slash commands, sparkline tool cards
@@ -107,6 +111,9 @@ byteai github status   # Check GitHub auth + repo status
 | `/github <target> <query>` | Discover+score skills/tools/harnesses/MCP |
 | `/github connect [repo] [public\|private]` | Publish to GitHub |
 | `/github status` | GitHub auth + repo status |
+| `/goal <set\|get\|clear\|complete>` | One durable session goal (survives resume) |
+| `/terminal <create\|list\|run\|close>` | Persistent shell sessions (cwd survives calls) |
+| `/feedback <remark\|rate\|stats>` | Record human feedback (never fed to model) |
 | `/setup` | Interactive setup wizard |
 | `/tools` | List available tools |
 | `/save <name>` | Save session |

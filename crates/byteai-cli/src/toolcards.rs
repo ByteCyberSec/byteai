@@ -83,6 +83,9 @@ pub fn tool_sigil(name: &str) -> &'static str {
         "moa" => "✺",            // many-voiced star
         "notify" => "❢",         // exclamation ornament
         "proc" => "▰",           // running block
+        "terminal" => "❯_",      // persistent prompt with cursor
+        "goal" => "◎→",          // target with forward arrow
+        "feedback" => "❝★",      // quote + star (human judgment)
         "sessionsearch" => "◔",  // browsing history
         "memsearch" => "◍",      // dotted memory
         "pi" => "π",             // pi

@@ -664,6 +664,9 @@ async fn repl(agent: &mut Agent) -> Result<()> {
                     println!("                  (/github skills <cap> · /github improve · /github current)");
                     println!("/github connect [repo] [public|private] — publish this project to GitHub (gh CLI)");
                     println!("/github status — GitHub auth + repo status · /github push — push latest");
+                    println!("/goal <set|get|clear|complete> — one durable session goal (survives resume)");
+                    println!("/terminal <create|list|run|close> — persistent shell sessions (state survives calls)");
+                    println!("/feedback <remark|rate|stats> — record human feedback (never fed to the model)");
                     println!("/save <name>    — save this session");
                     println!("/usage          — show token usage");
                     println!("/cap            — toggle CAP (Coding Auto-Pilot): ON=autonomous, OFF=wait for your answers");
@@ -860,6 +863,46 @@ async fn repl(agent: &mut Agent) -> Result<()> {
                 "setup" => {
                     if let Err(e) = setup::run() {
                         println!("[setup failed: {e:#}]");
+                    }
+                }
+                "goal" => {
+                    let rest = cmd.split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
+                    let action = rest.split_whitespace().next().unwrap_or("get").to_string();
+                    let text = rest.split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
+                    let args = serde_json::json!({"action": action, "text": text});
+                    match agent.tools.get("goal") {
+                        Some(t) => { let o = t.execute(args).await; println!("[goal] {}", o.output); }
+                        None => println!("[goal tool not available]"),
+                    }
+                }
+                "terminal" => {
+                    let rest = cmd.split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
+                    let parts: Vec<&str> = rest.splitn(2, ' ').collect();
+                    let action = if parts.is_empty() { "list".to_string() } else { parts[0].to_string() };
+                    let args = if action == "run" && parts.len() > 1 {
+                        let sub: Vec<&str> = parts[1].splitn(2, ' ').collect();
+                        serde_json::json!({"action": "run", "id": sub.first().unwrap_or(&""), "command": sub.get(1).unwrap_or(&"")})
+                    } else {
+                        serde_json::json!({"action": action, "label": parts.get(1).unwrap_or(&"")})
+                    };
+                    match agent.tools.get("terminal") {
+                        Some(t) => { let o = t.execute(args).await; println!("[terminal] {}", o.output); }
+                        None => println!("[terminal tool not available]"),
+                    }
+                }
+                "feedback" => {
+                    let rest = cmd.split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
+                    let parts: Vec<&str> = rest.splitn(2, ' ').collect();
+                    let action = parts.first().copied().unwrap_or("stats");
+                    let args = if action == "rate" {
+                        let r: Vec<&str> = parts.get(1).copied().unwrap_or("").split_whitespace().collect();
+                        serde_json::json!({"action": "rate", "msg_id": r.first().copied().unwrap_or(""), "score": r.get(1).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0), "text": r.get(2).copied().unwrap_or("")})
+                    } else {
+                        serde_json::json!({"action": action, "text": parts.get(1).copied().unwrap_or("")})
+                    };
+                    match agent.tools.get("feedback") {
+                        Some(t) => { let o = t.execute(args).await; println!("[feedback] {}", o.output); }
+                        None => println!("[feedback tool not available]"),
                     }
                 }
                 "quit" | "q" | "exit" => break,

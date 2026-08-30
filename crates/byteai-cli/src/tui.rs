@@ -58,6 +58,9 @@ const COMMANDS: &[(&str, &str)] = &[
     ("cap", "toggle CAP (Coding Auto-Pilot): ON=autonomous, OFF=wait for your answers"),
     ("ideas", "evidence-based idea discovery: /ideas <focus>"),
     ("github", "capability discovery: /github <target> <query>"),
+    ("goal", "durable session goal: /goal set <text> | get | clear | complete"),
+    ("terminal", "persistent shell: /terminal create|list|run <id> <cmd>|close <id>"),
+    ("feedback", "record feedback: /feedback remark <text> | rate <id> <1-5> | stats"),
     ("setup", "interactive setup wizard: /setup (providers, models, skills, tools)"),
     ("subagent", "spawn parallel subagents"),
     ("swarm", "spawn 3-way swarm"),
@@ -2270,6 +2273,64 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
             app.add_assistant("  The wizard walks you through provider config, agent settings,");
             app.add_assistant("  skills, and verification step by step.");
         }
+        "goal" => {
+            let action = parts.get(1).copied().unwrap_or("get");
+            let text = parts.get(2..).unwrap_or(&[]).join(" ");
+            let args = serde_json::json!({"action": action, "text": text});
+            let g = agent.lock().await;
+            let tool = g.tools.get("goal");
+            drop(g);
+            match tool {
+                Some(tool) => {
+                    let outcome = tool.execute(args).await;
+                    app.add_tool_card(&outcome.name, outcome.ok, outcome.elapsed_ms, &outcome.output);
+                }
+                None => app.add_error("goal tool not available"),
+            }
+        }
+        "terminal" => {
+            let action = parts.get(1).copied().unwrap_or("list");
+            let args = if action == "run" {
+                let id = parts.get(2).copied().unwrap_or("");
+                let command = parts.get(3..).unwrap_or(&[]).join(" ");
+                serde_json::json!({"action": "run", "id": id, "command": command})
+            } else {
+                let label = parts.get(2).copied().unwrap_or("");
+                serde_json::json!({"action": action, "label": label})
+            };
+            let g = agent.lock().await;
+            let tool = g.tools.get("terminal");
+            drop(g);
+            match tool {
+                Some(tool) => {
+                    let outcome = tool.execute(args).await;
+                    app.add_tool_card(&outcome.name, outcome.ok, outcome.elapsed_ms, &outcome.output);
+                }
+                None => app.add_error("terminal tool not available"),
+            }
+        }
+        "feedback" => {
+            let action = parts.get(1).copied().unwrap_or("stats");
+            let args = if action == "rate" {
+                let id = parts.get(2).copied().unwrap_or("");
+                let score = parts.get(3).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+                let note = parts.get(4..).unwrap_or(&[]).join(" ");
+                serde_json::json!({"action": "rate", "msg_id": id, "score": score, "text": note})
+            } else {
+                let text = parts.get(2..).unwrap_or(&[]).join(" ");
+                serde_json::json!({"action": action, "text": text})
+            };
+            let g = agent.lock().await;
+            let tool = g.tools.get("feedback");
+            drop(g);
+            match tool {
+                Some(tool) => {
+                    let outcome = tool.execute(args).await;
+                    app.add_tool_card(&outcome.name, outcome.ok, outcome.elapsed_ms, &outcome.output);
+                }
+                None => app.add_error("feedback tool not available"),
+            }
+        }
         other => {
             app.add_error(&format!("unknown command /{other} — try /help"));
         }
@@ -2779,7 +2840,7 @@ mod tests {
             "clear", "save", "usage", "session", "resume", "config", "keys",
             "version", "copy", "diff",
             "subagent", "swarm", "route", "council", "govern", "gates", "cap",
-            "ideas", "github", "setup", "dan", "quit",
+            "ideas", "github", "goal", "terminal", "feedback", "setup", "dan", "quit",
         ];
         for (name, _) in COMMANDS {
             assert!(handled.contains(name), "palette command /{name} has no handler");

@@ -975,7 +975,8 @@ impl Agent {
             }
 
             for o in &outcomes {
-                let output = truncate_tool_output(o, self.config.max_tool_output_chars);
+                let output =
+                    spill_tool_output(o, self.config.max_tool_output_chars, &self.data_dir);
                 self.history.push(Message::tool(&o.call_id, &o.name, &output));
             }
         }
@@ -1268,6 +1269,53 @@ pub fn estimate_tokens(messages: &[Message]) -> u64 {
 /// context budget and the provider window, which stalls the whole turn. Keep
 /// the head (where the meaningful content usually is) plus a small tail, and
 /// tell the model the full output was truncated and how big it was.
+/// Spill: when a tool result exceeds `max_chars`, save the full text to
+/// `<data_dir>/spill/<call_id>.txt` and hand the model a bounded preview plus
+/// a locator it can read later. This is the DeepSeek-harness `spill` idea:
+/// oversized output never blows the context, and nothing is lost.
+pub fn spill_tool_output(
+    o: &ToolOutcome,
+    max_chars: usize,
+    data_dir: &std::path::Path,
+) -> String {
+    let raw = &o.output;
+    if raw.chars().count() <= max_chars {
+        return raw.clone();
+    }
+    let spill_dir = data_dir.join("spill");
+    if std::fs::create_dir_all(&spill_dir).is_ok() {
+        let slug: String = o
+            .name
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+            .collect();
+        let file = spill_dir.join(format!("{slug}-{}.txt", o.call_id));
+        if std::fs::write(&file, raw).is_ok() {
+            let head: String = raw.chars().take(max_chars * 2 / 3).collect();
+            let tail: String = raw
+                .chars()
+                .skip(raw.chars().count().saturating_sub(max_chars / 3))
+                .collect();
+            let mid = raw
+                .chars()
+                .count()
+                .saturating_sub(head.chars().count() + tail.chars().count());
+            return format!(
+                "[tool {name} output SPILLED to {path}: full result was {total} chars — \
+                 showing first {head_len} + last {tail_len} chars]\n\n{head}\n\n... [{mid} chars omitted] ...\n\n{tail}\n\n\
+                 [read the full result with the read tool on {path}]",
+                name = o.name,
+                path = file.display(),
+                total = raw.chars().count(),
+                head_len = head.chars().count(),
+                tail_len = tail.chars().count(),
+                mid = mid,
+            );
+        }
+    }
+    truncate_tool_output(o, max_chars)
+}
+
 pub fn truncate_tool_output(o: &ToolOutcome, max_chars: usize) -> String {
     let raw = &o.output;
     if raw.chars().count() <= max_chars {
@@ -1661,6 +1709,46 @@ mod tests {
         // Small outputs pass through untouched.
         let small = ToolOutcome { call_id: "c2".into(), name: "echo".into(), output: "hello".into(), ok: true, elapsed_ms: 1 };
         assert_eq!(truncate_tool_output(&small, 50_000), "hello");
+    }
+
+    #[test]
+    fn spill_tool_output_writes_artifact_and_locator() {
+        let tmp = std::env::temp_dir().join(format!(
+            "byteai_spill_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let big = "z".repeat(120_000);
+        let o = ToolOutcome {
+            call_id: "c9".into(),
+            name: "fetch".into(),
+            output: big.clone(),
+            ok: true,
+            elapsed_ms: 1,
+        };
+        let sp = spill_tool_output(&o, 50_000, &tmp);
+        assert!(sp.contains("SPILLED"), "must say spilled, not truncated");
+        assert!(sp.contains("read the full result with the read tool on"), "locator present");
+        assert!(sp.len() < big.len(), "preview must be smaller than raw");
+        // The full artifact exists on disk and is the full original output.
+        let files: Vec<_> = std::fs::read_dir(tmp.join("spill"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .collect();
+        assert_eq!(files.len(), 1, "one spill artifact written");
+        let written = std::fs::read_to_string(&files[0]).unwrap();
+        assert_eq!(written, big, "spilled file preserves the full output");
+        // Small outputs still pass through untouched (no artifact).
+        let small = ToolOutcome { call_id: "c10".into(), name: "echo".into(), output: "hi".into(), ok: true, elapsed_ms: 1 };
+        let sp2 = spill_tool_output(&small, 50_000, &tmp);
+        assert_eq!(sp2, "hi");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
