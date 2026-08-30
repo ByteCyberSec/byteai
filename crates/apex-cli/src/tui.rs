@@ -2041,7 +2041,7 @@ async fn handle_command(agent: &Arc<tokio::sync::Mutex<Agent>>, app: &mut App, c
         }
         "version" | "v" => {
             app.add_meta(format!(
-                "  ByteAi (APEX) v{} — Rust autonomous coding agent",
+                "  ByteAi v{} — Rust autonomous coding agent",
                 env!("CARGO_PKG_VERSION")
             ));
         }

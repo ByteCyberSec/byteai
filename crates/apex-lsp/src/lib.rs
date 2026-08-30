@@ -1,4 +1,4 @@
-//! LSP integration for ByteAi (APEX) — Phase 2.
+//! LSP integration for ByteAi — Phase 2.
 //!
 //! A JSON-RPC 2.0 client for Language Server Protocol servers over stdio.
 //! Design goals:

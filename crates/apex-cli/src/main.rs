@@ -1,4 +1,4 @@
-//! ByteAi (codename APEX) — Phase 1 CLI.
+//! ByteAi — Phase 1 CLI.
 //!
 //! Subcommands: chat (one-shot or REPL), session (save/load/list), doctor,
 //! models, tui. Provider-agnostic over any OpenAI-compatible endpoint.
@@ -22,7 +22,7 @@ use clap::{Parser, Subcommand};
 use tracing::info;
 
 #[derive(Parser)]
-#[command(name = "byteai", version, about = "ByteAi (codename APEX) — fast autonomous coding agent")]
+#[command(name = "byteai", version, about = "ByteAi — fast autonomous coding agent")]
 struct Cli {
     #[command(subcommand)]
     cmd: Option<Cmd>,

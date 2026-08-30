@@ -10,7 +10,7 @@ authors = ["ByteAi contributors"]
 rust-version = "1.85"
 repository = "https://github.com/ByteCyberSec/byteai"
 homepage = "https://github.com/ByteCyberSec/byteai"
-description = "ByteAi (APEX) — fast autonomous coding agent: Rust core, optional power modules (LSP, DAP, memory, skills, multi-agent, routing, review)."
+description = "ByteAi — fast autonomous coding agent: Rust core, optional power modules (LSP, DAP, memory, skills, multi-agent, routing, review)."
 
 [workspace.dependencies]
 apex-types = { path = "crates/apex-types" }

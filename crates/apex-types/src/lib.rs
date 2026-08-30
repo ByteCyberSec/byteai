@@ -1,4 +1,4 @@
-//! Shared wire types for the ByteAi (APEX) agent.
+//! Shared wire types for the ByteAi agent.
 //!
 //! These types model the OpenAI-compatible chat-completions wire format so that
 //! any OpenAI-compatible endpoint works: OmniRoute, Ollama, LM Studio, vLLM,

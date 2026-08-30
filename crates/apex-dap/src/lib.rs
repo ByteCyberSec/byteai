@@ -1,4 +1,4 @@
-//! DAP (Debug Adapter Protocol) client for ByteAi (APEX) — Phase 4.
+//! DAP (Debug Adapter Protocol) client for ByteAi — Phase 4.
 //!
 //! A minimal-but-real DAP client over stdio, structurally parallel to
 //! apex-lsp: spawn an adapter (debugpy, lldb-dap, gdb), speak JSON-RPC,
@@ -205,7 +205,7 @@ impl DapSession {
         let args = json!({
             "adapterID": self.spec.adapter_id,
             "clientID": "byteai",
-            "clientName": "ByteAi (APEX)",
+            "clientName": "ByteAi",
             "columnsStartAt1": true,
             "linesStartAt1": true,
             "supportsVariableType": true,

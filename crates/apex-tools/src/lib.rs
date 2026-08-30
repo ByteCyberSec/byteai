@@ -1,4 +1,4 @@
-//! Native tool implementations for the ByteAi (APEX) agent.
+//! Native tool implementations for the ByteAi agent.
 //!
 //! Phase 1 tools: shell, read, search (literal + regex), edit (exact match),
 //! todo, note (minimal Layer-B memory seed).

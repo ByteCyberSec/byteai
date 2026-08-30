@@ -1,4 +1,4 @@
-//! AST-aware code intelligence for ByteAi (APEX) — Phase 2.
+//! AST-aware code intelligence for ByteAi — Phase 2.
 //!
 //! Tree-sitter based extraction: symbols (functions/classes/structs/impls/
 //! imports), whole-definition retrieval for smart reads, and lightweight

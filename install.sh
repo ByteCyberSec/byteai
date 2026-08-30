@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ByteAi (APEX) — one-command install for a fresh machine.
+# ByteAi — one-command install for a fresh machine.
 #
 #   curl -fsSL https://raw.githubusercontent.com/byteai/byteai/main/install.sh | bash
 #

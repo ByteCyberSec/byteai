@@ -3,7 +3,7 @@
 //! Doctrine (see docs/apex-intelligence.md):
 //!   * Find the best way to build: skills, harnesses, tools, MCP servers,
 //!     libraries, coding-agent technology.
-//!   * Evaluate candidates with the COMPATIBILITY ENGINE: APEX compatibility
+//!   * Evaluate candidates with the COMPATIBILITY ENGINE: ByteAi compatibility
 //!     0–100, project compatibility 0–100, integration complexity,
 //!     performance impact, security risk, maintenance risk, license, and a
 //!     single decision — ADOPT / ADAPT / LEARN FROM / REJECT.
@@ -310,7 +310,7 @@ impl GithubTool {
             }
             out.push_str("# /Github current — capability gap analysis\n\n");
             let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-            let system = "You are ByteAI APEX's /Github current engine. Analyze the current project's manifests and identify: (1) what is being built, (2) required capabilities, (3) which capabilities are already covered, (4) which are MISSING. Output a capability table like:\n\nREQUIRED\nAuthentication      ✓ / ✗\nPayments            ✓ / ✗\nOCR                 ✓ / ✗\n...\n\nThen list ONLY the missing capabilities as 'SEARCH FOR: <capability>' lines (one per line) so targeted GitHub searches can be run for exactly those.";
+            let system = "You are ByteAi's /Github current engine. Analyze the current project's manifests and identify: (1) what is being built, (2) required capabilities, (3) which capabilities are already covered, (4) which are MISSING. Output a capability table like:\n\nREQUIRED\nAuthentication      ✓ / ✗\nPayments            ✓ / ✗\nOCR                 ✓ / ✗\n...\n\nThen list ONLY the missing capabilities as 'SEARCH FOR: <capability>' lines (one per line) so targeted GitHub searches can be run for exactly those.";
             let user = format!(
                 "Today: {today}\nProject at: {}\n\n{manifest}\n\nProduce the capability table + SEARCH FOR lines.",
                 cwd.display()
@@ -391,7 +391,7 @@ impl GithubTool {
                 evidence.push('\n');
             }
             let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-            let system = "You are ByteAI APEX's /Github improve engine. Search specifically for technology that can make the coding agent ITSELF stronger. From the evidence, produce 'Top APEX improvements' ranked by expected benefit (impact × feasibility). For each: the area, the concrete technology/repo/idea, what it improves, expected benefit (High/Med/Low), effort, and a recommendation (ADOPT / ADAPT / LEARN FROM / REJECT with why). Only recommend meaningful changes — no noise.";
+            let system = "You are ByteAi's /Github improve engine. Search specifically for technology that can make the coding agent ITSELF stronger. From the evidence, produce 'Top improvements' ranked by expected benefit (impact × feasibility). For each: the area, the concrete technology/repo/idea, what it improves, expected benefit (High/Med/Low), effort, and a recommendation (ADOPT / ADAPT / LEARN FROM / REJECT with why). Only recommend meaningful changes — no noise.";
             let user = format!(
                 "Today: {today}\nResearch areas: {}\n\n=== EVIDENCE ===\n{evidence}\n=== END EVIDENCE ===\n\nProduce the ranked Top improvements.",
                 areas.join(", ")
@@ -671,9 +671,9 @@ impl GithubTool {
     /// Shared: build the (system, user) evaluation prompt pair.
     fn eval_prompt_direct(target: &str, focus: &str, today: &str) -> (String, String) {
         let system = [
-            "You are ByteAI APEX's /Github compatibility engine.",
+            "You are ByteAi's /Github compatibility engine.",
             "Evaluate each candidate repository against the COMPATIBILITY ENGINE:",
-            "  APEX compatibility: 0–100",
+            "  ByteAi compatibility: 0–100",
             "  Current project compatibility: 0–100",
             "  Integration complexity: Low / Medium / High",
             "  Performance impact: Positive / Neutral / Negative",
@@ -791,7 +791,7 @@ impl Tool for GithubTool {
         ToolDef {
             name: "github".into(),
             description: "/Github — capability discovery and upgrade engine. Finds and scores skills, harnesses, tools, \
-MCP servers, libraries, and coding-agent technology using the COMPATIBILITY ENGINE (APEX/project compatibility 0-100, \
+MCP servers, libraries, and coding-agent technology using the COMPATIBILITY ENGINE (ByteAi/project compatibility 0-100, \
 complexity, performance, security, maintenance, license, ADOPT/ADAPT/LEARN FROM/REJECT). Keeps a GitHub intelligence \
 memory + capability graph under intelligence/. Also supports /Github connect — connect this project to GitHub via gh CLI \
 (auth, create repo, push). Actions: menu, search, evaluate, current, improve, memory, graph, connect, status, push. \

@@ -1,4 +1,4 @@
-//! The ByteAi (APEX) agent core: loop, state machine, context budget, tool
+//! The ByteAi agent core: loop, state machine, context budget, tool
 //! dispatch. Phase 1 keeps the loop lean; power modules attach later.
 
 use std::sync::{Arc, Mutex};
@@ -205,7 +205,7 @@ impl Default for AgentConfig {
 }
 
 /// System prompt: short, model-aware, ADHD-friendly output contract.
-pub const SYSTEM_PROMPT: &str = r#"You are ByteAi (codename APEX), an autonomous coding agent.
+pub const SYSTEM_PROMPT: &str = r#"You are ByteAi, an autonomous coding agent.
 
 Working style: UNDERSTAND → INVESTIGATE → IMPLEMENT → TEST → VERIFY → REPORT.
 Use tools (shell, read, search, edit, websearch, fetch, todo, note, memory) whenever they reduce guesswork.

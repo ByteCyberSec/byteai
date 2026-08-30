@@ -1,4 +1,4 @@
-# ByteAi (APEX) — MIT license.
+# ByteAi — MIT license.
 # Third-party material reused with attribution (ADR-0010).
 
 ## Reference research repositories (architecture synthesis, all MIT)

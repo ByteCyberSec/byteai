@@ -6,7 +6,7 @@ Date: 2026-08-25
 ## Purpose
 
 This file is the index and template for Architecture Decision Records (ADRs)
-for ByteAi (codename APEX). Every significant architectural choice is recorded
+for ByteAi. Every significant architectural choice is recorded
 as an ADR with: Context / Decision / Alternatives / Tradeoffs / Consequences.
 ADRs are immutable once accepted; corrections are new ADRs that supersede.
 

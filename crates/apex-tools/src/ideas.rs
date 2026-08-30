@@ -197,7 +197,7 @@ impl IdeasTool {
 
             let today = chrono::Local::now().format("%Y-%m-%d").to_string();
             let system = [
-                "You are ByteAI APEX's /Ideas engine. You discover product opportunities from REAL internet evidence, never from imagination alone.",
+                "You are ByteAi's /Ideas engine. You discover product opportunities from REAL internet evidence, never from imagination alone.",
                 "Rules:",
                 "1. Mine the evidence for repeated, painful, unsolved problems — not generic trends.",
                 "2. Validate each idea: who has it, how often, current solutions, competitors, complaints about competitors, workarounds, willingness-to-pay indicators.",
@@ -267,7 +267,7 @@ impl IdeasTool {
                 evidence.push('\n');
             }
             let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-            let system = "You are ByteAI APEX's /Ideas deep-research engine. Produce a rigorous, evidence-based deep-dive on ONE product idea before it is built. Cover: Product (core user journey, must-have vs nice-to-have features, UX, integrations), Market (competitors, pricing, positioning, gaps), Technology (best stack, APIs, frameworks, open-source projects, infrastructure, deployment), Risk (security, privacy, legal, licensing, platform dependency, API costs, scalability, abuse). Then give a recommended implementation plan (phases). Be concrete and cite evidence from the searches.";
+            let system = "You are ByteAi's /Ideas deep-research engine. Produce a rigorous, evidence-based deep-dive on ONE product idea before it is built. Cover: Product (core user journey, must-have vs nice-to-have features, UX, integrations), Market (competitors, pricing, positioning, gaps), Technology (best stack, APIs, frameworks, open-source projects, infrastructure, deployment), Risk (security, privacy, legal, licensing, platform dependency, API costs, scalability, abuse). Then give a recommended implementation plan (phases). Be concrete and cite evidence from the searches.";
             let user = format!(
                 "Today: {today}\nIdea: {idea}\n\n=== EVIDENCE ===\n{evidence}\n=== END EVIDENCE ===\n\nProduce the deep-research report + recommended implementation plan."
             );
@@ -300,7 +300,7 @@ impl IdeasTool {
             let started = Instant::now();
             let mut out = String::new();
             let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-            let system = "You are ByteAI APEX's /Ideas build planner. Turn the selected idea into a concrete, production-ready implementation plan. Use ByteAI's own capabilities where they fit: existing skills, plan tool, verify, review, gates, spawn (subagents), route/council for decisions. Output a phase-by-phase plan (SPEC → ARCHITECTURE → SETUP → IMPLEMENT → TEST → DEBUG → REVIEW → SECURITY → OPTIMIZE → DEPLOY → VERIFY → SHIP). For each phase: goal, concrete files, key decisions, and how to verify it (tests). Then a 'Stack' section recommending: coding model, skills, tools, MCP servers, libraries, database, testing stack, deployment target — chosen FOR THIS PROJECT, not a one-size-fits-all stack. Do NOT invent demand; build what the evidence showed.";
+            let system = "You are ByteAi's /Ideas build planner. Turn the selected idea into a concrete, production-ready implementation plan. Use ByteAI's own capabilities where they fit: existing skills, plan tool, verify, review, gates, spawn (subagents), route/council for decisions. Output a phase-by-phase plan (SPEC → ARCHITECTURE → SETUP → IMPLEMENT → TEST → DEBUG → REVIEW → SECURITY → OPTIMIZE → DEPLOY → VERIFY → SHIP). For each phase: goal, concrete files, key decisions, and how to verify it (tests). Then a 'Stack' section recommending: coding model, skills, tools, MCP servers, libraries, database, testing stack, deployment target — chosen FOR THIS PROJECT, not a one-size-fits-all stack. Do NOT invent demand; build what the evidence showed.";
 
             // Pull any saved research on this idea as context.
             let mut prior = String::new();
