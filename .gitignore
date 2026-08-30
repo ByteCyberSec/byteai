@@ -9,3 +9,6 @@ target/
 *.db-shm
 .apex/
 .checkpoints/
+
+# Vendored reference clones (kept locally, not part of the build)
+vendor/
