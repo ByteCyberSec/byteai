@@ -295,7 +295,11 @@ fn build_agent(
     let data_dir = config::data_dir();
     let lsp = Arc::new(byteai_lsp::LspRegistry::new(byteai_lsp::default_servers()));
     let dap = Arc::new(byteai_dap::DapRegistry::new(byteai_dap::default_adapters()));
-    let tools = Registry::builtins(&ToolContext::with_all(data_dir.clone(), lsp, dap));
+    let mut ctx = ToolContext::with_all(data_dir.clone(), lsp, dap);
+    if let Ok(client) = byteai_provider::Client::new(provider.base_url.clone(), provider.resolved_key()) {
+        ctx = ctx.with_provider(client, model.clone());
+    }
+    let tools = Registry::builtins(&ctx);
 
     // Build a failover pool: the resolved provider first, then every other
     // configured provider with a resolved key (deduped by name). The pool
